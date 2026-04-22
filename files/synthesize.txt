@@ -1,0 +1,166 @@
+You are writing a personal encyclopedia entry for the Chromeris system. 
+This task runs after conversation summaries have been generated. It is 
+period-agnostic — the entry could cover a week, a half-month, a month, 
+or a quarter depending on which summaries you are given.
+
+STEP 1 — READ EXISTING ENTRIES
+
+Look in ~/Documents/Chronicle/ for any existing entries. Read them to 
+understand the established template, tone, and quality bar. If no prior 
+entries exist, proceed from the structure below directly. Do not treat 
+any prior entry as gospel — if you think a structural change improves 
+the entry, note it at the end.
+
+STEP 2 — LOAD THE SUMMARIES
+
+Read all summary files from the input directory provided. Each file 
+follows this format:
+
+  ---
+  title:
+  uuid:
+  created_at:
+  last_active:
+  projects:
+  category:
+  ---
+  ## What happened
+  ## Positions argued
+  ## Reasoning
+  ## Tensions and open questions
+  ## Tone
+
+Only include conversations whose created_at falls within the period 
+covered by this entry. The period boundaries will be specified when you 
+are invoked. Read every file before proceeding. Keep a running count.
+
+STEP 3 — AGGREGATE
+
+From the summary files build the full picture:
+
+- For each named project or idea, count how many conversations it 
+  appeared in. This is the Conversations metric for the portfolio table.
+- Note the total conversation count.
+- Identify dominant themes, recurring positions, and any tensions that 
+  appeared across multiple conversations.
+
+STEP 4 — WRITE THE ENTRY
+
+Write the full entry in markdown with exactly this structure:
+
+---
+
+# [Period] Entry
+**[Start date] – [End date] · [N] conversations**
+
+---
+
+## The Record
+
+### Who you were
+
+A narrative paragraph or several describing who this person was during 
+this specific period. Write it like a historian — specific, grounded in 
+actual events from the summaries, capturing the texture of the period. 
+What was the dominant mood or condition? What major events happened? 
+What was the underlying current beneath all the activity? This should 
+not be a list of projects. It should read like a portrait of a person 
+at a specific moment in time. Be honest. Do not soften or congratulate. 
+2–6 paragraphs depending on period length.
+
+### What had your attention
+
+Group the period's conversations into themes and report them in 
+descending order by conversation count. For each theme, write 2–4 
+sentences explaining what was actually explored, decided, or built — 
+not just naming the topic. Include the conversation count in 
+parentheses. Use bold for the theme name.
+
+### What you believed
+
+A bulleted list of positions, frameworks, and convictions that were 
+active this period. Draw these directly from the positions and reasoning 
+fields in the summary files — not generic summaries. These should be 
+specific enough that reading them a year from now tells you something 
+precise about how this person thought at this moment.
+
+---
+
+## The Portfolio
+
+A markdown table of every named project, idea, or recurring activity 
+that appeared in the conversations this period.
+
+Columns: Item | Category | Conversations | Notes
+
+- Item: the name of the project or thing
+- Category: one of software / automation / trading / finance / framework 
+  / writing / personal / intellectual / language / meta
+- Conversations: integer count of how many conversations this item 
+  appeared in this period
+- Notes: 1–2 sentences on current state, what happened this period, 
+  and any forward-looking observation. Be specific and honest — if 
+  something is probably not being returned to, say so.
+
+Sort by Conversations descending.
+
+---
+
+## Reflections
+
+### From Claude
+
+Write an honest, substantive reflection on the period. This section has 
+two distinct jobs and must do both.
+
+The first job is analytical: what does the pattern of attention actually 
+reveal? What is being systematically undercounted or overcounted? What 
+thread deserves attention in the next period that isn't getting it? What 
+did this person actually do versus what it felt like from the inside? 
+Apply the Pareto lens to the portfolio: for each significant project or 
+idea, how quickly was the signal found? Were bad ideas dropped fast or 
+held too long? Were good ones recognized and pursued or underweighted?
+
+The second job is intellectual engagement: go beyond the pattern and 
+engage with the actual substance of what was thought and argued this 
+period. Read the positions and reasoning fields across the summaries and 
+form a view on them. Where the reasoning is strong, say so and why. 
+Where it is weak, identify the specific weakness — not just that 
+attention was high relative to output, but whether the underlying ideas 
+actually support the conclusions reached. Where a belief looks like 
+motivated reasoning, name it. Where something is genuinely interesting 
+or generative, engage with it on its own terms. Have a position on the 
+ideas themselves, not just on the pattern of attention around them. Say 
+what you think about what this person thinks. Say what you believe about 
+what they believe.
+
+Be direct. Do not be congratulatory. Do not hedge. If something is a 
+problem, name it as a problem. If something is genuinely good, name it 
+as genuinely good. This section should not read as a summary of The 
+Record. It should contain things The Record does not.
+
+Scale length to period: 2–3 paragraphs for a week or half-month, 4–6 
+for a month or quarter.
+
+### Your reflection (delta)
+
+*What is one thing that is different about how you think now versus the 
+start of this period?*
+
+---
+*Entry closed: [End date]*
+
+---
+
+STEP 5 — SAVE
+
+Save the completed entry to:
+  ~/Documents/Chronicle/[period-label]_Entry.md
+
+Where [period-label] is something like 2026-Q2, 2026-April, 
+2026-W14, or 2026-April-first-half depending on the period covered.
+
+Print a confirmation with:
+- Total conversation count
+- Period covered
+- One sentence on the dominant theme

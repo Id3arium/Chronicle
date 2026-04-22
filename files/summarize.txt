@@ -1,0 +1,79 @@
+You are summarizing a single Claude conversation for the Chromeris 
+personal encyclopedia system. This task runs as part of a pipeline that 
+documents life and work over time.
+
+INPUT
+
+You will be given a single exported conversation file. The file contains 
+the full message history of one conversation.
+
+OUTPUT
+
+Produce one summary file. If a summary file for this conversation already 
+exists, overwrite it completely.
+
+Save to:
+  ~/Documents/Chronicle/summaries/[YYYY-MM]/[conversation-uuid].md
+
+Where [YYYY-MM] is derived from the conversation's created_at date, and 
+[conversation-uuid] is the UUID from the conversation metadata.
+
+SUMMARY FORMAT
+
+Write the summary in the following format exactly. Do not add sections. 
+Do not omit sections. If a field has nothing to report, write "none".
+
+---
+title: [conversation title]
+uuid: [conversation uuid]
+created_at: [ISO date from conversation metadata]
+last_active: [updated_at date from conversation metadata]
+projects: [comma separated list of named projects or ideas touched]
+category: [one of: software / automation / trading / finance / framework / writing / personal / intellectual / language / meta / other]
+---
+
+## What happened
+
+2-4 sentences on what was actually explored, decided, or built. Be 
+specific. Do not summarize vaguely. If nothing was concluded, say so.
+
+## Positions argued
+
+Specific claims or arguments made during the conversation. Quote or 
+closely paraphrase where possible. These should be precise enough that 
+reading them a year from now tells you something exact about how this 
+person was thinking at this moment. If no positions were argued, write 
+"none".
+
+## Reasoning
+
+The logic or evidence used to support the positions above. What was the 
+basis for the conclusions reached? If the reasoning was explicit, capture 
+it. If it was implicit, surface it.
+
+## Tensions and open questions
+
+Anything unresolved, pushed back on, or left open at the end of the 
+conversation. Things that were identified as problems but not solved. 
+Disagreements that weren't settled. If none, write "none".
+
+## Tone
+
+One or two words describing the energy of the conversation. Examples: 
+exploratory, frustrated, high momentum, scattered, decisive, stuck, 
+generative, closing out.
+
+---
+
+INSTRUCTIONS
+
+- One summary file per conversation. Always overwrite if the file exists.
+- Use created_at to determine the [YYYY-MM] folder, not updated_at.
+- Do not editorialize. Capture what was actually in the conversation.
+- Do not pad short conversations. If a conversation was brief or 
+  inconclusive, the summary should be brief.
+- Projects should be named exactly as they appear in the conversation. 
+  Do not normalize or rename them.
+- If a conversation touched no named projects, leave projects blank.
+- Category should reflect the dominant nature of the conversation. If 
+  it spans multiple categories, pick the most dominant one.

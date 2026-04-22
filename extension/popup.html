@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Chronicle Export</title>
+  <style>
+    :root {
+      --bg: #1e1e1e;
+      --fg: #e0e0e0;
+      --muted: #9a9a9a;
+      --border: #3a3a3a;
+      --accent: #6b52e8;
+      --accent-hover: #7d66f0;
+      --ok: #90ee90;
+      --warn: #f0c674;
+      --err: #ff9999;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #ffffff;
+        --fg: #222;
+        --muted: #666;
+        --border: #ddd;
+        --accent: #5436DA;
+        --accent-hover: #4329B8;
+        --ok: #1f7a1f;
+        --warn: #a86a00;
+        --err: #b00020;
+      }
+    }
+    body {
+      width: 300px;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 13px;
+      background: var(--bg);
+      color: var(--fg);
+    }
+    header {
+      padding: 10px 12px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+      color: white;
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+    }
+    header .title { font-weight: 600; letter-spacing: 0.2px; }
+    header .version { font-size: 11px; opacity: 0.8; }
+    main { padding: 10px 12px; }
+    label { display: block; margin: 6px 0 2px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+    input[type="date"], select {
+      width: 100%;
+      padding: 6px 8px;
+      background: var(--bg);
+      color: var(--fg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: 13px;
+      box-sizing: border-box;
+      cursor: pointer;
+    }
+    input[type="date"]:hover, select:hover { border-color: var(--accent); }
+    input[type="date"]::-webkit-calendar-picker-indicator {
+      cursor: pointer;
+      filter: invert(0.6);
+    }
+    @media (prefers-color-scheme: light) {
+      input[type="date"]::-webkit-calendar-picker-indicator { filter: none; }
+    }
+    .row { display: flex; gap: 8px; }
+    .row > div { flex: 1; }
+    button.primary {
+      width: 100%;
+      margin-top: 10px;
+      padding: 8px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    button.primary:hover { background: var(--accent-hover); }
+    button.primary:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; }
+    button.link {
+      background: none;
+      border: none;
+      color: var(--accent);
+      cursor: pointer;
+      font-size: 12px;
+      padding: 0;
+      margin-top: 4px;
+      text-decoration: underline;
+    }
+    #status {
+      margin-top: 10px;
+      padding: 8px;
+      background: rgba(0, 0, 0, 0.15);
+      border-radius: 4px;
+      min-height: 18px;
+    }
+    @media (prefers-color-scheme: light) {
+      #status { background: rgba(0, 0, 0, 0.04); }
+    }
+    .progress {
+      margin-top: 6px;
+      height: 4px;
+      background: var(--border);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .progress > div { height: 100%; background: var(--accent); width: 0%; transition: width 0.2s; }
+    .log {
+      margin-top: 10px;
+      max-height: 180px;
+      overflow-y: auto;
+      border-top: 1px solid var(--border);
+      padding-top: 6px;
+    }
+    .log-entry {
+      font-size: 11px;
+      line-height: 1.4;
+      padding: 2px 0;
+      display: flex;
+      gap: 6px;
+      word-break: break-word;
+    }
+    .log-entry.ok .mark { color: var(--ok); }
+    .log-entry.warn .mark { color: var(--warn); }
+    .log-entry.error .mark { color: var(--err); }
+    .log-entry .mark { flex: 0 0 12px; font-weight: bold; }
+    .log-entry .body { flex: 1; }
+    .log-entry .meta { color: var(--muted); }
+    .hidden { display: none !important; }
+    details { margin-top: 6px; }
+    summary { cursor: pointer; color: var(--muted); font-size: 11px; }
+    .details-row { font-size: 10px; color: var(--muted); margin-top: 2px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="title">Chronicle Export</span>
+    <span class="version" id="version"></span>
+  </header>
+  <main>
+    <div class="row">
+      <div>
+        <label for="startDate">Start</label>
+        <input type="date" id="startDate">
+      </div>
+      <div>
+        <label for="endDate">End</label>
+        <input type="date" id="endDate">
+      </div>
+    </div>
+    <label for="rangeField">Filter by</label>
+    <select id="rangeField">
+      <option value="updated_at">Updated at</option>
+      <option value="created_at">Created at</option>
+    </select>
+    <button class="primary" id="exportBtn">Export</button>
+    <button class="link" id="incrementalBtn">Export since last run</button>
+    <button class="link hidden" id="retryBtn">Retry failed conversations</button>
+
+    <div id="status">Ready.</div>
+    <div class="progress"><div id="progressBar"></div></div>
+    <div class="log" id="log"></div>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>
