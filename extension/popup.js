@@ -8,13 +8,18 @@ const els = {
   startDate: document.getElementById('startDate'),
   endDate: document.getElementById('endDate'),
   rangeField: document.getElementById('rangeField'),
+  fetchAll: document.getElementById('fetchAll'),
+  dateRow: document.getElementById('dateRow'),
   exportBtn: document.getElementById('exportBtn'),
-  incrementalBtn: document.getElementById('incrementalBtn'),
   retryBtn: document.getElementById('retryBtn'),
+  cancelBtn: document.getElementById('cancelBtn'),
+  elapsed: document.getElementById('elapsed'),
   status: document.getElementById('status'),
   progressBar: document.getElementById('progressBar'),
   log: document.getElementById('log')
 };
+
+let elapsedTimer = null;
 
 // ──────────────────────────── state helpers ────────────────────────────
 
@@ -40,6 +45,38 @@ function setProgress(completed, total) {
 
 function setStatusText(text) {
   els.status.textContent = text;
+}
+
+function formatElapsed(ms) {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return m > 0 ? `${m}m ${rem}s` : `${s}s`;
+}
+
+function startElapsedTicker(startedAt) {
+  stopElapsedTicker();
+  const tick = () => {
+    const ms = Date.now() - new Date(startedAt).getTime();
+    els.elapsed.textContent = `Elapsed ${formatElapsed(ms)}`;
+  };
+  tick();
+  elapsedTimer = setInterval(tick, 1000);
+}
+
+function stopElapsedTicker() {
+  if (elapsedTimer) {
+    clearInterval(elapsedTimer);
+    elapsedTimer = null;
+  }
+}
+
+function applyFetchAllState() {
+  if (els.fetchAll.checked) {
+    els.dateRow.classList.add('dates-disabled');
+  } else {
+    els.dateRow.classList.remove('dates-disabled');
+  }
 }
 
 // ──────────────────────────── log rendering ────────────────────────────
@@ -98,26 +135,36 @@ function renderFromState(state) {
 
   if (currentRun) {
     els.exportBtn.disabled = true;
-    els.incrementalBtn.disabled = true;
     els.retryBtn.classList.add('hidden');
+    els.cancelBtn.classList.remove('hidden');
+    if (currentRun.startedAt) startElapsedTicker(currentRun.startedAt);
     const { completed = 0, total = 0 } = currentRun;
     setStatusText(total > 0 ? `Fetching ${completed}/${total}…` : 'Starting export…');
     setProgress(completed, total);
     return;
   }
 
+  stopElapsedTicker();
+  els.cancelBtn.classList.add('hidden');
   els.exportBtn.disabled = false;
-  els.incrementalBtn.disabled = false;
   setProgress(0, 0);
 
   if (lastRun) {
     if (lastRun.aborted) {
       setStatusText(`Last run aborted: ${lastRun.error || 'unknown error'}`);
+    } else if (lastRun.noChanges) {
+      setStatusText('Nothing new since last run.');
     } else {
       const parts = [`Last run: ${lastRun.succeeded} ok`];
       if (lastRun.failed > 0) parts.push(`${lastRun.failed} failed`);
+      if (lastRun.deletedCount) parts.push(`${lastRun.deletedCount} deleted`);
       if (lastRun.outputFile) parts.push(`→ ${lastRun.outputFile}`);
       setStatusText(parts.join(' · '));
+    }
+    if (lastRun.durationMs) {
+      els.elapsed.textContent = `Took ${formatElapsed(lastRun.durationMs)}`;
+    } else {
+      els.elapsed.textContent = '';
     }
     if (lastRun.failed && lastRun.failed > 0) {
       els.retryBtn.classList.remove('hidden');
@@ -126,6 +173,7 @@ function renderFromState(state) {
     }
   } else {
     setStatusText('Ready.');
+    els.elapsed.textContent = '';
   }
 }
 
@@ -150,18 +198,21 @@ function sendToContent(tabId, message) {
   });
 }
 
-async function startExport(retryUuids) {
-  const startDate = els.startDate.value;
-  const endDate = els.endDate.value;
+async function startExport(onlyUuids) {
+  const fetchAll = els.fetchAll.checked;
   const rangeField = els.rangeField.value;
+  const startDate = fetchAll ? null : els.startDate.value;
+  const endDate = fetchAll ? null : els.endDate.value;
 
-  if (!startDate || !endDate) {
-    setStatusText('Pick both a start and an end date.');
-    return;
-  }
-  if (startDate > endDate) {
-    setStatusText('Start date must be on or before end date.');
-    return;
+  if (!fetchAll && !onlyUuids) {
+    if (!startDate || !endDate) {
+      setStatusText('Pick both a start and an end date, or check "Fetch all".');
+      return;
+    }
+    if (startDate > endDate) {
+      setStatusText('Start date must be on or before end date.');
+      return;
+    }
   }
 
   els.exportBtn.disabled = true;
@@ -172,10 +223,11 @@ async function startExport(retryUuids) {
     const tabId = await ensureContentScript();
     await sendToContent(tabId, {
       action: 'exportRange',
+      fetchAll,
       startDate,
       endDate,
       rangeField,
-      retryUuids: retryUuids || null
+      onlyUuids: onlyUuids || null
     });
     setStatusText('Export started. You can close this popup — it will keep running.');
   } catch (err) {
@@ -184,21 +236,9 @@ async function startExport(retryUuids) {
   }
 }
 
-async function startIncremental() {
-  els.exportBtn.disabled = true;
-  els.incrementalBtn.disabled = true;
-  els.retryBtn.classList.add('hidden');
-  setStatusText('Connecting to claude.ai…');
-
-  try {
-    const tabId = await ensureContentScript();
-    await sendToContent(tabId, { action: 'exportIncremental' });
-    setStatusText('Checking for updates. You can close this popup — it will keep running.');
-  } catch (err) {
-    els.exportBtn.disabled = false;
-    els.incrementalBtn.disabled = false;
-    setStatusText(`Could not start export: ${err.message}. Open claude.ai in the active tab and try again.`);
-  }
+async function cancelRun() {
+  await new Promise((resolve) => chrome.storage.local.set({ cancelRequested: true }, resolve));
+  setStatusText('Cancelling…');
 }
 
 async function retryFailed() {
@@ -209,10 +249,11 @@ async function retryFailed() {
     setStatusText('Nothing to retry.');
     return;
   }
-  // Replay the same range the last run used.
-  els.startDate.value = lastRun.rangeStart || els.startDate.value;
-  els.endDate.value = lastRun.rangeEnd || els.endDate.value;
-  els.rangeField.value = lastRun.rangeField || els.rangeField.value;
+  // Replay the same range the last run used. onlyUuids overrides filters
+  // in content.js, so fetchAll/date values are just for status display.
+  if (lastRun.rangeStart) els.startDate.value = lastRun.rangeStart;
+  if (lastRun.rangeEnd) els.endDate.value = lastRun.rangeEnd;
+  if (lastRun.rangeField) els.rangeField.value = lastRun.rangeField;
   startExport(failed);
 }
 
@@ -223,7 +264,8 @@ function savePrefs() {
     prefs: {
       startDate: els.startDate.value,
       endDate: els.endDate.value,
-      rangeField: els.rangeField.value
+      rangeField: els.rangeField.value,
+      fetchAll: els.fetchAll.checked
     }
   });
 }
@@ -239,6 +281,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   els.startDate.value = prefs.startDate || monthAgoIso();
   els.endDate.value = prefs.endDate || todayIso();
   if (prefs.rangeField) els.rangeField.value = prefs.rangeField;
+  els.fetchAll.checked = !!prefs.fetchAll;
+  applyFetchAllState();
 
   const state = await readState();
   renderFromState(state);
@@ -252,6 +296,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   els.startDate.addEventListener('change', savePrefs);
   els.endDate.addEventListener('change', savePrefs);
   els.rangeField.addEventListener('change', savePrefs);
+  els.fetchAll.addEventListener('change', () => { applyFetchAllState(); savePrefs(); });
 
   // Force native date picker to open on click anywhere in the input
   // (Firefox's built-in hotspot is narrow; showPicker() makes the whole
@@ -265,6 +310,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   els.exportBtn.addEventListener('click', () => startExport(null));
-  els.incrementalBtn.addEventListener('click', () => startIncremental());
+  els.cancelBtn.addEventListener('click', () => cancelRun());
   els.retryBtn.addEventListener('click', () => retryFailed());
 });

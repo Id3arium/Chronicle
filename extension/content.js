@@ -223,13 +223,37 @@ if (window.__chronicleExportLoaded) {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  async function runExport({ startDate, endDate, rangeField, onlyUuids }) {
+  async function isCancelled() {
+    const { cancelRequested } = await new Promise((resolve) =>
+      chrome.storage.local.get(['cancelRequested'], resolve)
+    );
+    return !!cancelRequested;
+  }
+
+  async function clearCancelFlag() {
+    await new Promise((resolve) => chrome.storage.local.remove(['cancelRequested'], resolve));
+  }
+
+  // Unified export. Incremental-by-default: only fetches conversations whose
+  // updated_at moved since last scrape. The `fetchAll` flag skips the date
+  // filter; `onlyUuids` (retry case) narrows to a specific UUID whitelist.
+  async function runExport({ fetchAll, startDate, endDate, rangeField, onlyUuids }) {
     const startedAt = new Date().toISOString();
+    await clearCancelFlag();
     await writeState({
-      currentRun: { startedAt, total: 0, completed: 0, rangeStart: startDate, rangeEnd: endDate, rangeField },
+      currentRun: {
+        startedAt,
+        total: 0,
+        completed: 0,
+        rangeStart: fetchAll ? null : startDate,
+        rangeEnd: fetchAll ? null : endDate,
+        rangeField,
+        fetchAll: !!fetchAll
+      },
       runLog: []
     });
-    await appendLog({ level: 'ok', msg: `Export started (${rangeField} ${startDate} → ${endDate})` });
+    const rangeLabel = fetchAll ? 'all conversations' : `${rangeField} ${startDate} → ${endDate}`;
+    await appendLog({ level: 'ok', msg: `Export started (${rangeLabel})` });
 
     try {
       const orgId = await getOrgId();
@@ -242,14 +266,42 @@ if (window.__chronicleExportLoaded) {
       const allConvs = await listAllConversations(orgId);
       await appendLog({ level: 'ok', msg: `Found ${allConvs.length} conversations across all contexts` });
 
-      // Filter by date range (and optional retry UUID whitelist).
+      const { seenConversations = {} } = await new Promise((resolve) =>
+        chrome.storage.local.get(['seenConversations'], resolve)
+      );
+
+      // Detect deletions: UUIDs we've seen before that no longer appear.
+      const currentUuidSet = new Set(allConvs.map((c) => c.uuid));
+      const deletedUuids = Object.keys(seenConversations).filter((u) => !currentUuidSet.has(u));
+
+      // Determine candidates by range + fetchAll. Then filter to only those
+      // whose updated_at is newer than what we already scraped (the
+      // incremental core). `onlyUuids` (retry) overrides both filters.
       const toFetch = [];
+      let skippedUnchanged = 0;
       for (const c of allConvs) {
-        const field = c[rangeField];
-        if (!dateInRange(field, startDate, endDate)) continue;
-        if (onlyUuids && !onlyUuids.includes(c.uuid)) continue;
+        if (onlyUuids) {
+          if (!onlyUuids.includes(c.uuid)) continue;
+        } else {
+          if (!fetchAll) {
+            const field = c[rangeField];
+            if (!dateInRange(field, startDate, endDate)) continue;
+          }
+          const prev = seenConversations[c.uuid];
+          if (prev && c.updated_at && c.updated_at <= prev) {
+            skippedUnchanged++;
+            continue;
+          }
+        }
         const project = c.project_uuid ? projectMap.get(c.project_uuid) || { uuid: c.project_uuid, name: '(unknown project)' } : null;
         toFetch.push({ project, stub: c });
+      }
+
+      if (skippedUnchanged > 0) {
+        await appendLog({ level: 'ok', msg: `Skipping ${skippedUnchanged} unchanged conversations (already up to date)` });
+      }
+      if (deletedUuids.length > 0) {
+        await appendLog({ level: 'warn', msg: `${deletedUuids.length} previously-seen conversations no longer exist on claude.ai` });
       }
 
       await updateCurrentRun({ total: toFetch.length });
@@ -260,7 +312,9 @@ if (window.__chronicleExportLoaded) {
       let completed = 0;
       let succeeded = 0;
       let failed = 0;
+      let cancelled = false;
       for (const { project, stub } of toFetch) {
+        if (await isCancelled()) { cancelled = true; break; }
         try {
           const full = await fetchFullConversation(orgId, stub.uuid);
           const record = buildConversationRecord(full, project);
@@ -289,115 +343,89 @@ if (window.__chronicleExportLoaded) {
         await sleep(FETCH_DELAY_MS);
       }
 
-      const outputFile = exportFilename(startDate, endDate);
+      if (cancelled) await appendLog({ level: 'warn', msg: `Cancelled after ${completed}/${toFetch.length}` });
+
+      // Build filename. "all" / "since-{YYYY-MM-DD}" for incremental-ish runs,
+      // date range for explicit ranges.
+      let outputFile;
+      if (fetchAll) {
+        outputFile = `chronicle-export-all-${new Date().toISOString().slice(0, 10)}.json`;
+      } else {
+        outputFile = exportFilename(startDate, endDate);
+      }
+
       const exportObj = {
         export_metadata: {
           exported_at: new Date().toISOString(),
-          range_start: `${startDate}T00:00:00Z`,
-          range_end: `${endDate}T23:59:59Z`,
+          range_start: fetchAll ? null : `${startDate}T00:00:00Z`,
+          range_end: fetchAll ? null : `${endDate}T23:59:59Z`,
           range_field: rangeField,
+          fetch_all: !!fetchAll,
           total_conversations: records.length,
+          skipped_unchanged: skippedUnchanged,
+          deleted_uuids: deletedUuids,
+          cancelled,
           extension_version: EXTENSION_VERSION
         },
         conversations: records
       };
 
-      triggerDownload(JSON.stringify(exportObj, null, 2), outputFile);
+      // Only download if we actually fetched something or there are deletions
+      // to record. Pure "nothing changed" runs produce no file.
+      const noChanges = records.length === 0 && deletedUuids.length === 0 && !cancelled;
+      if (!noChanges) {
+        triggerDownload(JSON.stringify(exportObj, null, 2), outputFile);
+      }
 
-      // Merge freshly-seen updated_at timestamps into persistent map so future
-      // "Export since last run" calls know what's already been scraped.
-      const { seenConversations: prevSeen = {} } = await new Promise((resolve) =>
-        chrome.storage.local.get(['seenConversations'], resolve)
-      );
-      const mergedSeen = { ...prevSeen, ...seenUpdates };
-      await writeState({ seenConversations: mergedSeen, lastIncrementalAt: new Date().toISOString() });
+      // Merge freshly-seen updated_at timestamps; drop deleted UUIDs from
+      // the seen map so they don't re-trigger deletion detection next run.
+      const mergedSeen = { ...seenConversations, ...seenUpdates };
+      for (const u of deletedUuids) delete mergedSeen[u];
+      await writeState({ seenConversations: mergedSeen });
 
       const finishedAt = new Date().toISOString();
+      const durationMs = new Date(finishedAt).getTime() - new Date(startedAt).getTime();
       await writeState({
         currentRun: null,
         lastRun: {
           startedAt,
           finishedAt,
+          durationMs,
           total: toFetch.length,
           succeeded,
           failed,
-          outputFile,
-          rangeStart: startDate,
-          rangeEnd: endDate,
-          rangeField
+          deletedCount: deletedUuids.length,
+          outputFile: noChanges ? null : outputFile,
+          rangeStart: fetchAll ? null : startDate,
+          rangeEnd: fetchAll ? null : endDate,
+          rangeField,
+          fetchAll: !!fetchAll,
+          noChanges,
+          cancelled
         }
       });
-      await appendLog({ level: 'ok', msg: `Export finished: ${succeeded} ok, ${failed} failed → ${outputFile}` });
+      await clearCancelFlag();
+      const summary = noChanges
+        ? 'Nothing new since last run.'
+        : `Export finished: ${succeeded} ok, ${failed} failed${deletedUuids.length ? `, ${deletedUuids.length} deleted` : ''} → ${outputFile}`;
+      await appendLog({ level: cancelled ? 'warn' : 'ok', msg: cancelled ? `${summary} (cancelled)` : summary });
     } catch (err) {
       const finishedAt = new Date().toISOString();
       await appendLog({ level: 'error', msg: `Export aborted: ${err.message}`, status: err.status || null, bodySnippet: err.bodySnippet || null });
       await writeState({
         currentRun: null,
-        lastRun: { startedAt, finishedAt, total: 0, succeeded: 0, failed: 0, outputFile: null, aborted: true, error: err.message }
+        lastRun: {
+          startedAt,
+          finishedAt,
+          durationMs: new Date(finishedAt).getTime() - new Date(startedAt).getTime(),
+          total: 0, succeeded: 0, failed: 0, outputFile: null, aborted: true, error: err.message
+        }
       });
+      await clearCancelFlag();
     }
   }
 
   // ──────────────────────────── message dispatch ────────────────────────────
-
-  async function runIncrementalExport() {
-    // Cheap: single list call. For each conversation, compare updated_at to
-    // the timestamp we last scraped for that UUID. Only fetch the delta.
-    const startedAt = new Date().toISOString();
-    await writeState({
-      currentRun: { startedAt, total: 0, completed: 0, rangeStart: null, rangeEnd: null, rangeField: 'updated_at', incremental: true },
-      runLog: []
-    });
-    await appendLog({ level: 'ok', msg: 'Incremental export started (since last run)' });
-
-    try {
-      const orgId = await getOrgId();
-      const { seenConversations = {} } = await new Promise((resolve) =>
-        chrome.storage.local.get(['seenConversations'], resolve)
-      );
-      const allConvs = await listAllConversations(orgId);
-      await appendLog({ level: 'ok', msg: `Listed ${allConvs.length} conversations; computing delta` });
-
-      const changed = allConvs.filter((c) => {
-        const prev = seenConversations[c.uuid];
-        if (!prev) return true;
-        return c.updated_at && c.updated_at > prev;
-      });
-
-      if (changed.length === 0) {
-        await writeState({
-          currentRun: null,
-          lastRun: {
-            startedAt,
-            finishedAt: new Date().toISOString(),
-            total: 0, succeeded: 0, failed: 0, outputFile: null,
-            rangeStart: null, rangeEnd: null, rangeField: 'updated_at',
-            incremental: true, noChanges: true
-          }
-        });
-        await appendLog({ level: 'ok', msg: 'Nothing new since last run.' });
-        return;
-      }
-
-      // Derive a date range that covers the changed set so runExport's
-      // date filter doesn't drop anything.
-      const updates = changed.map((c) => c.updated_at).filter(Boolean).sort();
-      const startDate = (updates[0] || new Date().toISOString()).slice(0, 10);
-      const endDate = new Date().toISOString().slice(0, 10);
-      const onlyUuids = changed.map((c) => c.uuid);
-
-      await appendLog({ level: 'ok', msg: `${onlyUuids.length} changed since last run — fetching details` });
-      // Hand off to runExport. It will overwrite currentRun/runLog but the
-      // messages above are already in the log.
-      await runExport({ startDate, endDate, rangeField: 'updated_at', onlyUuids });
-    } catch (err) {
-      await appendLog({ level: 'error', msg: `Incremental export aborted: ${err.message}`, status: err.status || null, bodySnippet: err.bodySnippet || null });
-      await writeState({
-        currentRun: null,
-        lastRun: { startedAt, finishedAt: new Date().toISOString(), total: 0, succeeded: 0, failed: 0, outputFile: null, aborted: true, error: err.message, incremental: true }
-      });
-    }
-  }
 
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'exportRange') {
@@ -407,16 +435,12 @@ if (window.__chronicleExportLoaded) {
         ? request.onlyUuids
         : Array.isArray(request.retryUuids) ? request.retryUuids : null;
       runExport({
+        fetchAll: !!request.fetchAll,
         startDate: request.startDate,
         endDate: request.endDate,
         rangeField: request.rangeField === 'created_at' ? 'created_at' : 'updated_at',
         onlyUuids
       }).catch((err) => console.error('[Chronicle] unhandled error', err));
-      sendResponse({ accepted: true });
-      return true;
-    }
-    if (request.action === 'exportIncremental') {
-      runIncrementalExport().catch((err) => console.error('[Chronicle] unhandled error', err));
       sendResponse({ accepted: true });
       return true;
     }
