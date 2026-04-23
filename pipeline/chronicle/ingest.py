@@ -39,16 +39,18 @@ def _month_key(iso_ts: str) -> str:
     return iso_ts[:7] if iso_ts else "unknown"
 
 
-def _write_conversation(conv: dict[str, Any]) -> Path:
+def _write_conversation(conv: dict[str, Any]) -> tuple[Path, int]:
+    """Write the conversation JSON and return (path, char_count of the text payload)."""
     uuid = conv["uuid"]
     month = _month_key(conv.get("created_at") or "")
     out_dir = conversations_dir() / month
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{uuid}.json"
+    payload = json.dumps(conv, indent=2, ensure_ascii=False)
     with out_path.open("w", encoding="utf-8") as f:
-        json.dump(conv, f, indent=2, ensure_ascii=False)
+        f.write(payload)
         f.write("\n")
-    return out_path
+    return out_path, len(payload)
 
 
 def _relpath(path: Path) -> str:
@@ -110,7 +112,7 @@ def ingest_export(export_path: Path, state: dict[str, Any]) -> dict[str, list[st
         uuid = conv.get("uuid")
         if not uuid:
             continue
-        out_path = _write_conversation(conv)
+        out_path, char_count = _write_conversation(conv)
         existing = state["conversations"].get(uuid)
         if existing is None:
             state["conversations"][uuid] = {
@@ -119,7 +121,9 @@ def ingest_export(export_path: Path, state: dict[str, Any]) -> dict[str, list[st
                 "updated_at": conv.get("updated_at"),
                 "project_name": conv.get("project_name"),
                 "conversation_file": _relpath(out_path),
+                "conversation_chars": char_count,
                 "summary_file": None,
+                "summary_chars": None,
                 "summarized_at": None,
                 "deleted_at": None,
                 "first_seen": now_iso(),
@@ -132,6 +136,7 @@ def ingest_export(export_path: Path, state: dict[str, Any]) -> dict[str, list[st
             existing["project_name"] = conv.get("project_name") or existing.get("project_name")
             existing["updated_at"] = conv.get("updated_at") or prev_updated
             existing["conversation_file"] = _relpath(out_path)
+            existing["conversation_chars"] = char_count
             # If the conversation was previously tombstoned and came back,
             # un-tombstone. (Rare but possible if a user restores one.)
             if existing.get("deleted_at"):

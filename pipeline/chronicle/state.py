@@ -110,11 +110,23 @@ def conversations_in_period(
 def entry_stale(
     state: dict[str, Any], period_label: str, range_start: str, range_end: str
 ) -> bool:
+    """Entry is stale iff:
+    - it doesn't exist yet, OR
+    - any conversation in its range has updated_at > synthesized_at, OR
+    - any child-tier entry it depends on is itself stale or younger than it.
+    The third clause handles rollup cascade: a quarterly is stale if any
+    monthly it's built from has been re-synthesized since the quarterly ran.
+    """
     entry = state["entries"].get(period_label)
     if not entry or not entry.get("synthesized_at"):
         return True
     threshold = entry["synthesized_at"]
     for _, c in conversations_in_period(state, range_start, range_end):
         if c["updated_at"] > threshold:
+            return True
+    # Cascade check: if a child entry was re-synthesized after this one, we're stale.
+    for child_label in entry.get("children", []):
+        child = state["entries"].get(child_label)
+        if child and child.get("synthesized_at", "") > threshold:
             return True
     return False

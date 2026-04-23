@@ -117,6 +117,7 @@ def summarize_one(
 
     rel = str(out_path.relative_to(data_root()))
     conv_meta["summary_file"] = rel
+    conv_meta["summary_chars"] = len(output)
     conv_meta["summarized_at"] = now_iso()
 
     title = conv_meta.get("title") or "(untitled)"

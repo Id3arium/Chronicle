@@ -69,11 +69,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_sum.add_argument("--budget", type=float, default=0.50, help="Max USD per claude invocation (default 0.50).")
     p_sum.set_defaults(func=_summarize_cmd)
 
-    p_syn = sub.add_parser("synthesize", help="Build a period entry from fresh summaries.")
-    p_syn.add_argument("--period", required=True, help="Period label, e.g. 2026-April.")
-    p_syn.add_argument("--range", nargs=2, metavar=("START", "END"), required=True, help="Date range (YYYY-MM-DD YYYY-MM-DD).")
+    p_syn = sub.add_parser(
+        "synthesize",
+        help="Build a period entry. Tier inferred from the label "
+        "(2026_Apr_19-25=week, 2026_Apr=month, 2026_Q2=quarter, 2026=year).",
+    )
+    p_syn.add_argument(
+        "--period",
+        required=True,
+        help="Period label. Examples: 2026_Apr_19-25, 2026_Apr, 2026_Q2, 2026.",
+    )
     p_syn.add_argument("--budget", type=float, default=2.00, help="Max USD per claude invocation (default 2.00).")
     p_syn.set_defaults(func=_synthesize_cmd)
+
+    p_cap = sub.add_parser(
+        "capacity",
+        help="Preview what a synthesize call would pack (char count, tokens, missing children).",
+    )
+    p_cap.add_argument("period", help="Period label (same format as synthesize --period).")
+    p_cap.set_defaults(func=lambda a: __import__("chronicle.capacity", fromlist=["run"]).run(a))
 
     p_install = sub.add_parser("install-agent", help="Install launchd agent that auto-ingests new exports.")
     p_install.set_defaults(func=_install_agent_cmd)

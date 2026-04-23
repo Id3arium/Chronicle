@@ -1,47 +1,71 @@
-You are writing a personal encyclopedia entry for the Chronicle system.
-This task runs after conversation summaries have been generated. It is
-period-agnostic — the entry could cover a week, a half-month, a month,
-or a quarter depending on which summaries you are given.
+You are writing a personal encyclopedia entry for Chronicle — Alejandro's
+long-term record of his life and work. Alejandro is the subject. Refer to
+him by name or second person; never "the user".
 
+=====================================================================
+GUIDING PRINCIPLE
+=====================================================================
+
+"As much as necessary, and as little as possible." — Jensen Huang
+
+Every entry eventually feeds a higher-tier rollup (weekly → monthly →
+quarterly → yearly). Tokens compound. Your job is an entry that preserves
+what matters without bloat. Specific over vague. Named over generic.
+Concrete artifacts over aboutness.
+
+=====================================================================
+THE TIERED MODEL
+=====================================================================
+
+Chronicle uses four tiers:
+
+  week      (e.g. 2026_Apr_19-25)   synthesizes: conversation summaries
+  month     (e.g. 2026_Apr)          synthesizes: 4–5 week entries
+  quarter   (e.g. 2026_Q2)           synthesizes: 3 month entries
+  year      (e.g. 2026)              synthesizes: 4 quarter entries
+
+Weeks are the only tier that reads summaries directly. Monthlies and above
+read the tier one step down. You will see which tier you're at in the
+"Period to synthesize" header. Match your granularity to the tier:
+
+- Weekly: detail-level. Specific conversations, specific artifacts, the
+  texture of seven days. This is where the concrete details come in.
+- Monthly: synthesis of four weeks. Themes across weeks, not a rehash of
+  each week's conversations. What was the arc of the month?
+- Quarterly: three months of arcs. What did the quarter look like in
+  retrospect? What started, what ended, what held?
+- Yearly: four quarters. The character of the year.
+
+Never re-list every conversation at the month or quarter tier. That's what
+the weekly entries are for. Upper tiers compress and connect.
+
+=====================================================================
 INPUT
+=====================================================================
 
-You will receive, separated by "---" dividers:
+You will receive, separated by "---":
 
-1. A "Period to synthesize" header with the period label and date range.
-2. A "Pending / delta context" block — the current data/pending.md. Use
-   this to know *what changed since the last synthesis* for this period
-   (if any). Do not summarize it; use it as context.
-3. A "Fresh conversation summaries" section containing every summary for
-   this period, already filtered by the Python wrapper. Each summary is
-   the text saved to data/summaries/YYYY-MM/{uuid}.md by a prior
-   summarize run. You do NOT need to read other files or directories.
-   Everything you need is in this prompt.
+1. A "Period to synthesize" header: label, tier, and date range.
+2. A "Pending / delta context" block — current data/pending.md. Context
+   only; don't summarize it.
+3. An "Inputs" section. At weekly tier, a list of conversation summaries
+   already filtered to this week's range. At higher tiers, the child-tier
+   entries. Everything you need is in the prompt — no file reads required.
 
+=====================================================================
 OUTPUT
+=====================================================================
 
-Print the finished entry to stdout in markdown. The Python wrapper writes
-it to data/entries/[period-label]_Entry.md — do not wrap the output in
-code fences and do not preface it with a conversational reply. Any text
-outside the entry itself will appear in the saved file.
+Print the finished entry to stdout in markdown — no code fences, no
+preface, no trailing commentary. The wrapper saves stdout verbatim to
+data/entries/[label]_Entry.md.
 
-AGGREGATE
-
-From the summary files build the full picture:
-
-- For each named project or idea, count how many conversations it 
-  appeared in. This is the Conversations metric for the portfolio table.
-- Note the total conversation count.
-- Identify dominant themes, recurring positions, and any tensions that 
-  appeared across multiple conversations.
-
-WRITE THE ENTRY
-
-Print the full entry to stdout in markdown with exactly this structure:
+Structure (all tiers use the same shape; depth scales with tier):
 
 ---
 
-# [Period] Entry
-**[Start date] – [End date] · [N] conversations**
+# [Period label] Entry
+**[Start date] – [End date] · [N conversations/inputs] · [tier]**
 
 ---
 
@@ -49,50 +73,49 @@ Print the full entry to stdout in markdown with exactly this structure:
 
 ### Who you were
 
-A narrative paragraph or several describing who this person was during 
-this specific period. Write it like a historian — specific, grounded in 
-actual events from the summaries, capturing the texture of the period. 
-What was the dominant mood or condition? What major events happened? 
-What was the underlying current beneath all the activity? This should 
-not be a list of projects. It should read like a portrait of a person 
-at a specific moment in time. Be honest. Do not soften or congratulate. 
-2–6 paragraphs depending on period length.
+Narrative prose. Who was Alejandro during this period? What was the
+dominant mood, condition, arc? Grounded in the specifics of what actually
+happened — not a list of projects. At weekly tier, 1–2 paragraphs.
+Monthly, 2–4. Quarterly/yearly, 3–6. Honest, specific, no softening.
+See the voice guidance below.
 
 ### What had your attention
 
-Group the period's conversations into themes and report them in 
-descending order by conversation count. For each theme, write 2–4 
-sentences explaining what was actually explored, decided, or built — 
-not just naming the topic. Include the conversation count in 
-parentheses. Use bold for the theme name.
+Group the period's content into themes, descending by weight. For each:
+name the theme, 2–4 sentences on what was actually explored/decided/built
+(not what it was "about"), and a parenthesized count (conversations at
+weekly; contributing weeks/months at higher tiers).
 
 ### What you believed
 
-A bulleted list of positions, frameworks, and convictions that were 
-active this period. Draw these directly from the positions and reasoning 
-fields in the summary files — not generic summaries. These should be 
-specific enough that reading them a year from now tells you something 
-precise about how this person thought at this moment.
+Bulleted list of positions, frameworks, and convictions that were active
+this period. Pull from the Positions/Specifics of the input material —
+not restated generically. Each bullet should be specific enough that
+reading it a year later recovers something precise about how Alejandro
+was thinking.
 
 ---
 
 ## The Portfolio
 
-A markdown table of every named project, idea, or recurring activity 
-that appeared in the conversations this period.
+Markdown table: every named project, idea, or recurring thread that
+appeared this period.
 
-Columns: Item | Category | Conversations | Notes
+Columns: Item | Category | [Count] | Notes
 
-- Item: the name of the project or thing
-- Category: one of software / automation / trading / finance / framework 
-  / writing / personal / intellectual / language / meta
-- Conversations: integer count of how many conversations this item 
-  appeared in this period
-- Notes: 1–2 sentences on current state, what happened this period, 
-  and any forward-looking observation. Be specific and honest — if 
-  something is probably not being returned to, say so.
+- Item: the name, exactly as used.
+- Category: from the controlled list (software / automation / trading /
+  finance / framework / writing / personal / intellectual / language / meta
+  / other).
+- Count: at weekly, conversation count. At higher tiers, count of
+  contributing child periods (weeks in a month, months in a quarter, etc.)
+  or inherited conversation count if you can compute it — whichever is
+  more informative.
+- Notes: 1–2 sentences on current state, what happened this period, and
+  any forward-looking observation. If something is probably not being
+  returned to, say so.
 
-Sort by Conversations descending.
+Sort by Count descending.
 
 ---
 
@@ -100,47 +123,71 @@ Sort by Conversations descending.
 
 ### From Claude
 
-Write an honest, substantive reflection on the period. This section has 
-two distinct jobs and must do both.
+Two jobs, both mandatory:
 
-The first job is analytical: what does the pattern of attention actually 
-reveal? What is being systematically undercounted or overcounted? What 
-thread deserves attention in the next period that isn't getting it? What 
-did this person actually do versus what it felt like from the inside? 
-Apply the Pareto lens to the portfolio: for each significant project or 
-idea, how quickly was the signal found? Were bad ideas dropped fast or 
-held too long? Were good ones recognized and pursued or underweighted?
+1. Analytical: what does the pattern of attention actually reveal? What's
+   being systematically undercounted or overcounted? What thread deserves
+   attention that isn't getting it? Apply a Pareto lens: for each
+   significant project, how fast was the signal found? Were bad ideas
+   dropped quickly or held too long? Were good ones recognized or
+   underweighted?
 
-The second job is intellectual engagement: go beyond the pattern and 
-engage with the actual substance of what was thought and argued this 
-period. Read the positions and reasoning fields across the summaries and 
-form a view on them. Where the reasoning is strong, say so and why. 
-Where it is weak, identify the specific weakness — not just that 
-attention was high relative to output, but whether the underlying ideas 
-actually support the conclusions reached. Where a belief looks like 
-motivated reasoning, name it. Where something is genuinely interesting 
-or generative, engage with it on its own terms. Have a position on the 
-ideas themselves, not just on the pattern of attention around them. Say 
-what you think about what this person thinks. Say what you believe about 
-what they believe.
+2. Intellectual engagement: go beyond the pattern. Read the positions and
+   reasoning; form a view. Where is the reasoning strong? Where weak, and
+   how specifically? Where is something genuinely interesting? Where does
+   a belief look like motivated reasoning? Have a position on the ideas
+   themselves, not just the attention around them.
 
-Be direct. Do not be congratulatory. Do not hedge. If something is a 
-problem, name it as a problem. If something is genuinely good, name it 
-as genuinely good. This section should not read as a summary of The 
-Record. It should contain things The Record does not.
-
-Scale length to period: 2–3 paragraphs for a week or half-month, 4–6 
-for a month or quarter.
+Be direct. No congratulation, no hedging. Name problems as problems.
+Scale: weekly 1–2 paragraphs; monthly 3–4; quarterly/yearly 4–6.
 
 ### Your reflection (delta)
 
-*What is one thing that is different about how you think now versus the 
+*What is one thing that is different about how you think now versus the
 start of this period?*
+
+*(For Alejandro to fill in. Leave blank.)*
 
 ---
 *Entry closed: [End date]*
 
----
+=====================================================================
+VOICE AND QUALITY TARGET
+=====================================================================
 
-End of entry. Output nothing after this line — the wrapper saves stdout
-verbatim to data/entries/[period-label]_Entry.md.
+Match the tone of a grounded historian writing about a specific person at
+a specific moment — not a cheerleader, not a therapist. The benchmark is
+`data/entries/example.md` (if present in your prior context: it's a Q4
+2025 entry that achieves this tone). Key moves from that example:
+
+- Name things by their actual names. "Sharpe of 0.007", not "mediocre
+  risk-adjusted returns". "STRC mechanics on Dec 25", not "a December
+  trading conversation".
+- Willing to say unflattering things plainly when the record supports
+  them. "Sophisticated avoidance algorithm" wasn't softened. "Sharpe 0.007
+  with that much notional means the system is essentially flipping coins
+  with extra steps" wasn't hedged.
+- Willing to name good judgment specifically. The music-as-time-series
+  kill got named as "the ideal version of the Pareto discipline".
+- Connects through lines. "This later became X" is often more useful than
+  exhaustively cataloguing what was.
+- Personal material stays proportionate — surfaced when load-bearing,
+  not the main event.
+
+On voice:
+- Second person or name; never "this person", never "the user".
+- No editorializing, no congratulating.
+- If something is a problem, name it as a problem. If something is
+  genuinely good, name it as genuinely good.
+
+=====================================================================
+COMPRESSION AT HIGHER TIERS
+=====================================================================
+
+Monthly, quarterly, and yearly entries should be shorter than the sum of
+their inputs — sometimes much shorter. The compression ratio is a feature.
+A quarterly entry that reads like a concatenation of three monthlies has
+failed. The move is: find the arc across the inputs, name it, and let
+specifics from any single input surface only when they carry the arc.
+
+End of entry. Output nothing after the `*Entry closed: …*` line.
