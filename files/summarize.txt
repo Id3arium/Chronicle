@@ -1,22 +1,24 @@
-You are summarizing a single Claude conversation for the Chromeris 
-personal encyclopedia system. This task runs as part of a pipeline that 
+You are summarizing a single Claude conversation for the Chronicle
+personal encyclopedia system. This task runs as part of a pipeline that
 documents life and work over time.
 
 INPUT
 
-You will be given a single exported conversation file. The file contains 
-the full message history of one conversation.
+You will receive two things, separated by a "---" divider:
+
+1. A "Pending work context" block — the contents of data/pending.md, showing
+   what else in the pipeline is awaiting attention. This is context only;
+   do NOT summarize or react to it. It may be empty.
+
+2. A single exported conversation file as JSON. This contains the full
+   message history of one conversation.
 
 OUTPUT
 
-Produce one summary file. If a summary file for this conversation already 
-exists, overwrite it completely.
-
-Save to:
-  ~/Documents/Chronicle/summaries/[YYYY-MM]/[conversation-uuid].md
-
-Where [YYYY-MM] is derived from the conversation's created_at date, and 
-[conversation-uuid] is the UUID from the conversation metadata.
+Print exactly one summary document to stdout. Do not wrap it in code
+fences. Do not preface it with a conversational reply. The wrapper process
+captures stdout verbatim and writes it to a file — any extra text will
+appear in the saved summary.
 
 SUMMARY FORMAT
 
@@ -67,8 +69,7 @@ generative, closing out.
 
 INSTRUCTIONS
 
-- One summary file per conversation. Always overwrite if the file exists.
-- Use created_at to determine the [YYYY-MM] folder, not updated_at.
+- Output exactly one summary document to stdout — nothing before or after.
 - Do not editorialize. Capture what was actually in the conversation.
 - Do not pad short conversations. If a conversation was brief or 
   inconclusive, the summary should be brief.

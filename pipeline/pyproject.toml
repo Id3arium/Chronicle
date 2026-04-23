@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chronicle"
+version = "0.1.0"
+description = "Chronicle pipeline: ingest Claude.ai exports, orchestrate summaries and period entries."
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+chronicle = "chronicle.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["chronicle*"]

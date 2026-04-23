@@ -1,40 +1,30 @@
-You are writing a personal encyclopedia entry for the Chromeris system. 
-This task runs after conversation summaries have been generated. It is 
-period-agnostic — the entry could cover a week, a half-month, a month, 
+You are writing a personal encyclopedia entry for the Chronicle system.
+This task runs after conversation summaries have been generated. It is
+period-agnostic — the entry could cover a week, a half-month, a month,
 or a quarter depending on which summaries you are given.
 
-STEP 1 — READ EXISTING ENTRIES
+INPUT
 
-Look in ~/Documents/Chronicle/ for any existing entries. Read them to 
-understand the established template, tone, and quality bar. If no prior 
-entries exist, proceed from the structure below directly. Do not treat 
-any prior entry as gospel — if you think a structural change improves 
-the entry, note it at the end.
+You will receive, separated by "---" dividers:
 
-STEP 2 — LOAD THE SUMMARIES
+1. A "Period to synthesize" header with the period label and date range.
+2. A "Pending / delta context" block — the current data/pending.md. Use
+   this to know *what changed since the last synthesis* for this period
+   (if any). Do not summarize it; use it as context.
+3. A "Fresh conversation summaries" section containing every summary for
+   this period, already filtered by the Python wrapper. Each summary is
+   the text saved to data/summaries/YYYY-MM/{uuid}.md by a prior
+   summarize run. You do NOT need to read other files or directories.
+   Everything you need is in this prompt.
 
-Read all summary files from the input directory provided. Each file 
-follows this format:
+OUTPUT
 
-  ---
-  title:
-  uuid:
-  created_at:
-  last_active:
-  projects:
-  category:
-  ---
-  ## What happened
-  ## Positions argued
-  ## Reasoning
-  ## Tensions and open questions
-  ## Tone
+Print the finished entry to stdout in markdown. The Python wrapper writes
+it to data/entries/[period-label]_Entry.md — do not wrap the output in
+code fences and do not preface it with a conversational reply. Any text
+outside the entry itself will appear in the saved file.
 
-Only include conversations whose created_at falls within the period 
-covered by this entry. The period boundaries will be specified when you 
-are invoked. Read every file before proceeding. Keep a running count.
-
-STEP 3 — AGGREGATE
+AGGREGATE
 
 From the summary files build the full picture:
 
@@ -44,9 +34,9 @@ From the summary files build the full picture:
 - Identify dominant themes, recurring positions, and any tensions that 
   appeared across multiple conversations.
 
-STEP 4 — WRITE THE ENTRY
+WRITE THE ENTRY
 
-Write the full entry in markdown with exactly this structure:
+Print the full entry to stdout in markdown with exactly this structure:
 
 ---
 
@@ -152,15 +142,5 @@ start of this period?*
 
 ---
 
-STEP 5 — SAVE
-
-Save the completed entry to:
-  ~/Documents/Chronicle/[period-label]_Entry.md
-
-Where [period-label] is something like 2026-Q2, 2026-April, 
-2026-W14, or 2026-April-first-half depending on the period covered.
-
-Print a confirmation with:
-- Total conversation count
-- Period covered
-- One sentence on the dominant theme
+End of entry. Output nothing after this line — the wrapper saves stdout
+verbatim to data/entries/[period-label]_Entry.md.
