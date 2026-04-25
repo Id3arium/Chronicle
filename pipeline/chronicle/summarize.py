@@ -29,6 +29,7 @@ from .paths import (
     ensure_dirs,
     instructions_dir,
     pending_file,
+    stem_for,
     summaries_dir,
 )
 from .state import now_iso
@@ -112,7 +113,13 @@ def summarize_one(
     month = (conv_meta.get("created_at") or "unknown")[:7]
     out_dir = summaries_dir() / month
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{uuid}.md"
+    # Reuse existing summary filename if present (survives title edits).
+    existing_sum = conv_meta.get("summary_file")
+    if existing_sum and not existing_sum.startswith("summaries/deleted/"):
+        out_path = data_root() / existing_sum
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        out_path = out_dir / f"{stem_for(uuid, conv_meta.get('title'))}.md"
     out_path.write_text(output, encoding="utf-8")
 
     rel = str(out_path.relative_to(data_root()))

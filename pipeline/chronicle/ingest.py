@@ -25,10 +25,12 @@ from . import state as state_mod
 from .notify import notify
 from .paths import (
     conversations_dir,
+    data_root,
     deleted_conversations_dir,
     deleted_summaries_dir,
     ensure_dirs,
     exports_dir,
+    stem_for,
     summaries_dir,
 )
 from .state import now_iso
@@ -39,13 +41,23 @@ def _month_key(iso_ts: str) -> str:
     return iso_ts[:7] if iso_ts else "unknown"
 
 
-def _write_conversation(conv: dict[str, Any]) -> tuple[Path, int]:
-    """Write the conversation JSON and return (path, char_count of the text payload)."""
+def _write_conversation(
+    conv: dict[str, Any], existing_rel: str | None
+) -> tuple[Path, int]:
+    """Write the conversation JSON and return (path, char_count of the text payload).
+
+    If we've seen this UUID before (existing_rel set), keep the original filename
+    even if the title changed — the UUID8 suffix is the stable anchor.
+    """
     uuid = conv["uuid"]
     month = _month_key(conv.get("created_at") or "")
     out_dir = conversations_dir() / month
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"{uuid}.json"
+    if existing_rel:
+        out_path = data_root() / existing_rel
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        out_path = out_dir / f"{stem_for(uuid, conv.get('title'))}.json"
     payload = json.dumps(conv, indent=2, ensure_ascii=False)
     with out_path.open("w", encoding="utf-8") as f:
         f.write(payload)
@@ -112,8 +124,12 @@ def ingest_export(export_path: Path, state: dict[str, Any]) -> dict[str, list[st
         uuid = conv.get("uuid")
         if not uuid:
             continue
-        out_path, char_count = _write_conversation(conv)
         existing = state["conversations"].get(uuid)
+        existing_rel = existing.get("conversation_file") if existing else None
+        # Don't keep a tombstoned path if the conversation is being re-added.
+        if existing_rel and existing_rel.startswith("conversations/deleted/"):
+            existing_rel = None
+        out_path, char_count = _write_conversation(conv, existing_rel)
         if existing is None:
             state["conversations"][uuid] = {
                 "title": conv.get("title"),

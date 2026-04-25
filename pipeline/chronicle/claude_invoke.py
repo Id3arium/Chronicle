@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -56,12 +57,14 @@ def run_claude(
         "--disallowedTools",
         "Bash,Write,Edit,NotebookEdit",
     ]
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
     try:
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
             timeout=timeout_seconds,
+            env=env,
         )
     except subprocess.TimeoutExpired as e:
         raise ClaudeInvocationError(

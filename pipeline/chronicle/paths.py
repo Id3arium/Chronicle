@@ -5,7 +5,27 @@ pipeline/ directory's parent. An env var CHRONICLE_ROOT overrides for tests.
 """
 
 import os
+import re
 from pathlib import Path
+
+
+def slugify(title: str | None, *, max_len: int = 60) -> str:
+    """Title → filesystem-safe slug. Empty/None → 'untitled'."""
+    if not title:
+        return "untitled"
+    s = title.lower()
+    s = re.sub(r"[^\w\s-]", "", s, flags=re.UNICODE)
+    s = re.sub(r"[\s_]+", "-", s).strip("-")
+    s = re.sub(r"-+", "-", s)
+    if not s:
+        return "untitled"
+    return s[:max_len].rstrip("-") or "untitled"
+
+
+def stem_for(uuid: str, title: str | None) -> str:
+    """Stable filename stem: {slug}__{uuid8}. UUID suffix prevents collisions
+    and lets us find the file by UUID even if the title changed upstream."""
+    return f"{slugify(title)}__{uuid[:8]}"
 
 
 def repo_root() -> Path:
