@@ -22,6 +22,7 @@ from typing import Any
 
 from . import pending as pending_mod
 from . import state as state_mod
+from .metrics import conversation_prose, measure_text
 from .notify import notify
 from .paths import (
     conversations_dir,
@@ -130,6 +131,7 @@ def ingest_export(export_path: Path, state: dict[str, Any]) -> dict[str, list[st
         if existing_rel and existing_rel.startswith("conversations/deleted/"):
             existing_rel = None
         out_path, char_count = _write_conversation(conv, existing_rel)
+        prose = measure_text(conversation_prose(conv))
         if existing is None:
             state["conversations"][uuid] = {
                 "title": conv.get("title"),
@@ -138,8 +140,14 @@ def ingest_export(export_path: Path, state: dict[str, Any]) -> dict[str, list[st
                 "project_name": conv.get("project_name"),
                 "conversation_file": _relpath(out_path),
                 "conversation_chars": char_count,
+                "original_chars": prose["chars"],
+                "original_words": prose["words"],
+                "original_tokens_est": prose["tokens_est"],
                 "summary_file": None,
                 "summary_chars": None,
+                "summary_words": None,
+                "summary_tokens_est": None,
+                "compression_ratio": None,
                 "summarized_at": None,
                 "deleted_at": None,
                 "first_seen": now_iso(),
@@ -153,6 +161,9 @@ def ingest_export(export_path: Path, state: dict[str, Any]) -> dict[str, list[st
             existing["updated_at"] = conv.get("updated_at") or prev_updated
             existing["conversation_file"] = _relpath(out_path)
             existing["conversation_chars"] = char_count
+            existing["original_chars"] = prose["chars"]
+            existing["original_words"] = prose["words"]
+            existing["original_tokens_est"] = prose["tokens_est"]
             # If the conversation was previously tombstoned and came back,
             # un-tombstone. (Rare but possible if a user restores one.)
             if existing.get("deleted_at"):

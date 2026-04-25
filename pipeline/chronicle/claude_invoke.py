@@ -32,6 +32,7 @@ def run_claude(
     *,
     max_budget_usd: float = 0.50,
     timeout_seconds: int = 600,
+    model: str | None = None,
 ) -> str:
     """Run `claude -p` with the instruction file prepended to input_text.
 
@@ -57,6 +58,8 @@ def run_claude(
         "--disallowedTools",
         "Bash,Write,Edit,NotebookEdit",
     ]
+    if model:
+        cmd.extend(["--model", model])
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
     try:
         result = subprocess.run(

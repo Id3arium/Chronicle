@@ -184,9 +184,12 @@ def run(args: Any) -> None:
         + "\n\n---\n\n".join(f"{it['heading']}\n\n{it['body']}" for it in items)
     )
 
+    model = getattr(args, "model", None) or "opus"
+    print(f"  Model: {model}")
     try:
         output = run_claude(
-            _instruction_file(), input_text, max_budget_usd=args.budget
+            _instruction_file(), input_text,
+            max_budget_usd=args.budget, model=model,
         )
     except ClaudeInvocationError as e:
         print(f"claude error: {e}")

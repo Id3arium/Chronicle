@@ -67,6 +67,8 @@ def build_parser() -> argparse.ArgumentParser:
     sum_target.add_argument("--all-stale", action="store_true", help="Default. Summarize every stale conversation.")
     sum_target.add_argument("--period", help="Summarize every stale conversation in a given month (YYYY-MM).")
     p_sum.add_argument("--budget", type=float, default=0.50, help="Max USD per claude invocation (default 0.50).")
+    p_sum.add_argument("--workers", type=int, default=1, help="Parallel claude invocations (default 1; try 4 for bulk runs). Watch for API rate limits.")
+    p_sum.add_argument("--model", default="sonnet", help="Claude model alias passed to `claude --model` (default: sonnet — fast/cheap, good for extraction). Override with 'opus' if a run reads weak.")
     p_sum.set_defaults(func=_summarize_cmd)
 
     p_syn = sub.add_parser(
@@ -80,6 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Period label. Examples: 2026_Apr_19-25, 2026_Apr, 2026_Q2, 2026.",
     )
     p_syn.add_argument("--budget", type=float, default=2.00, help="Max USD per claude invocation (default 2.00).")
+    p_syn.add_argument("--model", default="opus", help="Claude model alias passed to `claude --model` (default: opus — synthesis is the interpretive tier, worth the cost).")
     p_syn.set_defaults(func=_synthesize_cmd)
 
     p_cap = sub.add_parser(
