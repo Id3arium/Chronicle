@@ -22,10 +22,28 @@ def slugify(title: str | None, *, max_len: int = 60) -> str:
     return s[:max_len].rstrip("-") or "untitled"
 
 
-def stem_for(uuid: str, title: str | None) -> str:
-    """Stable filename stem: {slug}__{uuid8}. UUID suffix prevents collisions
-    and lets us find the file by UUID even if the title changed upstream."""
-    return f"{slugify(title)}__{uuid[:8]}"
+def stem_for(uuid: str, title: str | None, created_at: str | None = None) -> str:
+    """Stable filename stem: {DD}_{slug}__{uuid8}.
+
+    DD is the zero-padded day-of-month from `created_at` (ISO 8601). It makes
+    `ls` inside a YYYY-MM directory show conversations in chronological order
+    without needing to read frontmatter or sort by mtime. Falls back to "00"
+    if created_at is missing or unparseable — that sorts to the top, making
+    bad data visually obvious.
+
+    UUID suffix prevents collisions and lets us find the file by UUID even
+    if the title changed upstream.
+    """
+    day = "00"
+    if created_at and len(created_at) >= 10:
+        # ISO 8601: YYYY-MM-DD... → take chars 8-9.
+        try:
+            d = int(created_at[8:10])
+            if 1 <= d <= 31:
+                day = f"{d:02d}"
+        except ValueError:
+            pass
+    return f"{day}_{slugify(title)}__{uuid[:8]}"
 
 
 def repo_root() -> Path:
@@ -70,6 +88,13 @@ def state_file() -> Path:
 
 def pending_file() -> Path:
     return data_root() / "pending.md"
+
+
+def glossary_file() -> Path:
+    """Project/term glossary loaded ONLY on synthesize passes. Summaries stay
+    self-contained — they get a 'never invent meanings, carry verbatim' rule
+    instead, to keep summarize-tier token cost flat."""
+    return data_root() / "glossary.md"
 
 
 def instructions_dir() -> Path:

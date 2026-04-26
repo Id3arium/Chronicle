@@ -14,6 +14,7 @@ and continue.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -89,17 +90,13 @@ def _select_targets(state: dict[str, Any], args: Any) -> list[str]:
             )
         return [args.uuid]
     if args.period:
-        period = args.period  # "YYYY-MM"
-        # month bounds
-        rs = f"{period}-01"
-        # naive last-day: ingest keyed on created_at YYYY-MM, so string prefix is enough.
-        return [
-            uuid
-            for uuid, c in convs.items()
-            if not c.get("deleted_at")
-            and (c.get("created_at") or "")[:7] == period
-            and state_mod.summary_stale(c)
-        ]
+        from .calendar import PeriodParseError, parse_period
+        try:
+            _tier, rs, re_ = parse_period(args.period)
+        except PeriodParseError as e:
+            raise SystemExit(str(e))
+        rows = state_mod.conversations_in_period(state, rs, re_)
+        return [uuid for uuid, c in rows if state_mod.summary_stale(c)]
     # default: all stale
     return state_mod.stale_summary_uuids(state)
 
@@ -115,13 +112,14 @@ def summarize_one(
     """Returns True on success, False on failure. Mutates state on success."""
     conv_meta = state["conversations"].get(uuid)
     if not conv_meta:
-        print(f"  ✗ {uuid[:8]} — not in state (skipping)")
+        print(f"  ✗ {uuid[:8]} — not in state (skipping)", flush=True)
         return False
     conv_path = data_root() / conv_meta["conversation_file"]
     if not conv_path.exists():
         print(
             f"  ✗ {uuid[:8]} — conversation file missing at {conv_path}. "
-            f"Re-ingest the source export."
+            f"Re-ingest the source export.",
+            flush=True,
         )
         return False
 
@@ -155,7 +153,7 @@ def summarize_one(
             model=model,
         )
     except ClaudeInvocationError as e:
-        print(f"  ✗ {uuid[:8]} — claude error: {e}")
+        print(f"  ✗ {uuid[:8]} — claude error: {e}", flush=True)
         return False
 
     # Write summary. Month derived from created_at so summaries mirror
@@ -169,14 +167,18 @@ def summarize_one(
         out_path = data_root() / existing_sum
         out_path.parent.mkdir(parents=True, exist_ok=True)
     else:
-        out_path = out_dir / f"{stem_for(uuid, conv_meta.get('title'))}.md"
+        out_path = out_dir / f"{stem_for(uuid, conv_meta.get('title'), conv_meta.get('created_at'))}.md"
     # Inject length metrics into the frontmatter. The summary's own prose is
     # the apples-to-apples count; we measure the whole stdout so it covers
     # frontmatter + body, which is fine for ratio purposes.
     summary_metrics = measure_text(output)
     ratio = compression_ratio(summary_metrics["chars"], orig_chars)
     output = _inject_metrics(output, orig_words, summary_metrics, ratio)
-    out_path.write_text(output, encoding="utf-8")
+    # Atomic write: never leave a half-finished summary on disk if something
+    # crashes between bytes. Write to a sibling .tmp and rename on success.
+    tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
+    tmp_path.write_text(output, encoding="utf-8")
+    os.replace(tmp_path, out_path)
 
     rel = str(out_path.relative_to(data_root()))
     conv_meta["summary_file"] = rel
@@ -187,7 +189,7 @@ def summarize_one(
     conv_meta["summarized_at"] = now_iso()
 
     title = conv_meta.get("title") or "(untitled)"
-    print(f"  ✓ {uuid[:8]} — \"{title[:60]}\" → {rel}")
+    print(f"  ✓ {uuid[:8]} — \"{title[:60]}\" → {rel}", flush=True)
     return True
 
 

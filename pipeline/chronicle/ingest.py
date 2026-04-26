@@ -58,7 +58,7 @@ def _write_conversation(
         out_path = data_root() / existing_rel
         out_path.parent.mkdir(parents=True, exist_ok=True)
     else:
-        out_path = out_dir / f"{stem_for(uuid, conv.get('title'))}.json"
+        out_path = out_dir / f"{stem_for(uuid, conv.get('title'), conv.get('created_at'))}.json"
     payload = json.dumps(conv, indent=2, ensure_ascii=False)
     with out_path.open("w", encoding="utf-8") as f:
         f.write(payload)

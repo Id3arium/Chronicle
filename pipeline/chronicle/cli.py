@@ -65,7 +65,7 @@ def build_parser() -> argparse.ArgumentParser:
     sum_target = p_sum.add_mutually_exclusive_group()
     sum_target.add_argument("--uuid", help="Summarize a single conversation by UUID.")
     sum_target.add_argument("--all-stale", action="store_true", help="Default. Summarize every stale conversation.")
-    sum_target.add_argument("--period", help="Summarize every stale conversation in a given month (YYYY-MM).")
+    sum_target.add_argument("--period", help="Summarize every stale conversation in a period label (e.g. 2026-04-22 single day, 2026_Apr_H1, 2026_Apr, 2026_Q2, 2026).")
     p_sum.add_argument("--budget", type=float, default=0.50, help="Max USD per claude invocation (default 0.50).")
     p_sum.add_argument("--workers", type=int, default=1, help="Parallel claude invocations (default 1; try 4 for bulk runs). Watch for API rate limits.")
     p_sum.add_argument("--model", default="sonnet", help="Claude model alias passed to `claude --model` (default: sonnet — fast/cheap, good for extraction). Override with 'opus' if a run reads weak.")
@@ -74,12 +74,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_syn = sub.add_parser(
         "synthesize",
         help="Build a period entry. Tier inferred from the label "
-        "(2026_Apr_19-25=week, 2026_Apr=month, 2026_Q2=quarter, 2026=year).",
+        "(2026_Apr_H1=half, 2026_Apr=full-month half, 2026_Q2=quarter, 2026=year). "
+        "If a month is sparse (<10 conversations), a half-tier run on either "
+        "half auto-merges into a single 2026_Apr_H1-H2 entry covering the whole month.",
     )
     p_syn.add_argument(
         "--period",
         required=True,
-        help="Period label. Examples: 2026_Apr_19-25, 2026_Apr, 2026_Q2, 2026.",
+        help="Period label. Examples: 2026_Apr_H1, 2026_Apr_H2, 2026_Apr_H1-H2, 2026_Apr, 2026_Q2, 2026.",
     )
     p_syn.add_argument("--budget", type=float, default=2.00, help="Max USD per claude invocation (default 2.00).")
     p_syn.add_argument("--model", default="opus", help="Claude model alias passed to `claude --model` (default: opus — synthesis is the interpretive tier, worth the cost).")
@@ -91,6 +93,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_cap.add_argument("period", help="Period label (same format as synthesize --period).")
     p_cap.set_defaults(func=lambda a: __import__("chronicle.capacity", fromlist=["run"]).run(a))
+
+    p_stale = sub.add_parser(
+        "stale",
+        help="List stale summaries grouped by date, with copy-paste summarize commands.",
+    )
+    p_stale.add_argument(
+        "--period",
+        help="Optional period label to scope the list (e.g. 2026_Mar_H2, 2026_Q1, 2026, 2026-03-22). Default: all.",
+    )
+    p_stale.set_defaults(func=lambda a: __import__("chronicle.stale", fromlist=["run"]).run(a))
 
     p_install = sub.add_parser("install-agent", help="Install launchd agent that auto-ingests new exports.")
     p_install.set_defaults(func=_install_agent_cmd)

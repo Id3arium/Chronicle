@@ -13,7 +13,7 @@ from .calendar import PeriodParseError, parse_period
 from .synthesize import (
     BUDGET_TOKENS,
     _gather_rollup_inputs,
-    _gather_week_inputs,
+    _gather_half_inputs,
     _estimate_tokens,
 )
 
@@ -29,8 +29,8 @@ def run(args: Any) -> None:
     print(f"Tier:    {tier}")
     print(f"Range:   {rs} → {re_}")
 
-    if tier == "week":
-        items, stale, total_chars = _gather_week_inputs(state, rs, re_)
+    if tier == "half":
+        items, stale, total_chars = _gather_half_inputs(state, rs, re_)
         print(f"Inputs:  {len(items)} fresh summary/ies")
         if stale:
             print(

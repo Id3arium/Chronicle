@@ -29,11 +29,46 @@ Keep: every distinct idea, every named frame, every distinction
 that was drawn, every concrete artifact, every number, every
 coinage, every verbatim line that did real work.
 
-Length is determined by the conversation's content, not a target.
-A short narrow conversation gets a short summary. A long
-high-significance conversation with a dozen load-bearing ideas
-gets a long summary — because there are a dozen things to cover.
-Don't pad. Don't compress *into* the load-bearing material.
+Length scales with significance, not with input size.
+
+Concretely:
+- `high` significance: spend the words. A long high-significance
+  conversation with a dozen load-bearing ideas gets a long summary
+  — losing one of those ideas costs more than the tokens to keep
+  it. Compression ratio (summary / original) for these will be low,
+  and that's correct.
+- `medium`: cover the load-bearing material, cut everything else
+  hard. Most conversations land here.
+- `low`: be aggressive. A one-off debug session, a quick lookup, a
+  casual aside — these can be very short. A few sentences may be
+  enough. Don't pad a low-significance conversation to "look
+  thorough"; that's exactly the bloat we're avoiding.
+
+The rule of thumb: across a half-month of conversations, the total
+words spent should redistribute *toward* the high-significance ones.
+If a `low` and a `high` are getting roughly the same word count, one
+of them is wrong — almost always the `low`.
+
+Don't pad. Don't compress *into* the load-bearing material of a
+high-significance conversation.
+
+=====================================================================
+NEVER INVENT MEANINGS
+=====================================================================
+
+If a term appears in the conversation that you don't have a confident
+definition for — a project name, an acronym, a coined phrase, an
+internal label — **carry it verbatim**. Do not expand it. Do not
+guess. Do not gloss it.
+
+"FOP" stays "FOP". "STRC" stays "STRC". A project called "Chronicle"
+stays "Chronicle". If the conversation itself defines the term, use
+that definition; if it doesn't, leave the bare term in place.
+
+This matters because summaries get read months later and feed
+synthesis. A wrong expansion ("FOP = Forms of Patterns") becomes
+load-bearing fiction at the next tier. A bare acronym is recoverable;
+a confident wrong gloss is not.
 
 =====================================================================
 INPUT

@@ -53,3 +53,39 @@ def compression_ratio(summary_chars: int, original_chars: int) -> float:
     if not original_chars:
         return 0.0
     return round(summary_chars / original_chars, 4)
+
+
+def parse_frontmatter(text: str) -> dict[str, str]:
+    """Extract the `key: value` pairs from a leading `---\\n...\\n---` block.
+    Returns {} if no frontmatter is found. Values stay as strings — caller
+    converts to int/float as needed."""
+    t = text.lstrip()
+    if not t.startswith("---\n"):
+        return {}
+    rest = t[4:]
+    end = rest.find("\n---")
+    if end == -1:
+        return {}
+    block = rest[:end]
+    out: dict[str, str] = {}
+    for line in block.splitlines():
+        if ":" not in line:
+            continue
+        k, _, v = line.partition(":")
+        out[k.strip()] = v.strip()
+    return out
+
+
+def entry_body(text: str) -> str:
+    """Return the markdown body of an entry/summary with frontmatter stripped.
+    Used for entry word counts so the metrics block doesn't count itself."""
+    t = text.lstrip()
+    if not t.startswith("---\n"):
+        return text
+    rest = t[4:]
+    end = rest.find("\n---")
+    if end == -1:
+        return text
+    # Skip past the closing fence + newline.
+    after = rest[end + len("\n---"):]
+    return after.lstrip("\n")

@@ -57,6 +57,13 @@ def run_claude(
         str(max_budget_usd),
         "--disallowedTools",
         "Bash,Write,Edit,NotebookEdit",
+        # Override the user's global defaultMode. If they have plan-mode set
+        # globally (common), headless `-p` invocations leak preamble like
+        # "Plan exit was denied..." into our entry/summary output. Pipeline
+        # calls have all write-tools disabled anyway, so plan mode adds no
+        # safety — only contamination.
+        "--permission-mode",
+        "default",
     ]
     if model:
         cmd.extend(["--model", model])
@@ -76,10 +83,17 @@ def run_claude(
         ) from e
 
     if result.returncode != 0:
-        tail = (result.stderr or "").strip().splitlines()[-20:]
+        # Rate-limit and budget messages sometimes land on stdout, sometimes
+        # stderr. Surface both tails so the cause is visible without re-running.
+        err_tail = (result.stderr or "").strip().splitlines()[-20:]
+        out_tail = (result.stdout or "").strip().splitlines()[-20:]
+        parts = [f"claude exited with code {result.returncode}."]
+        if err_tail:
+            parts.append("Last stderr:\n" + "\n".join(err_tail))
+        if out_tail:
+            parts.append("Last stdout:\n" + "\n".join(out_tail))
         raise ClaudeInvocationError(
-            f"claude exited with code {result.returncode}. Last stderr:\n"
-            + "\n".join(tail),
+            "\n".join(parts),
             stderr=result.stderr or "",
         )
 
