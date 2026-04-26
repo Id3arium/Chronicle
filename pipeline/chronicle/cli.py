@@ -63,12 +63,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_sum = sub.add_parser("summarize", help="Run Claude over conversations to generate summaries.")
     sum_target = p_sum.add_mutually_exclusive_group()
-    sum_target.add_argument("--uuid", help="Summarize a single conversation by UUID.")
-    sum_target.add_argument("--all-stale", action="store_true", help="Default. Summarize every stale conversation.")
-    sum_target.add_argument("--period", help="Summarize every stale conversation in a period label (e.g. 2026-04-22 single day, 2026_Apr_H1, 2026_Apr, 2026_Q2, 2026).")
-    p_sum.add_argument("--budget", type=float, default=0.50, help="Max USD per claude invocation (default 0.50).")
-    p_sum.add_argument("--workers", type=int, default=1, help="Parallel claude invocations (default 1; try 4 for bulk runs). Watch for API rate limits.")
-    p_sum.add_argument("--model", default="sonnet", help="Claude model alias passed to `claude --model` (default: sonnet — fast/cheap, good for extraction). Override with 'opus' if a run reads weak.")
+    sum_target.add_argument("-u", "--uuid", help="Summarize a single conversation by UUID.")
+    sum_target.add_argument("-a", "--all-stale", action="store_true", help="Default. Summarize every stale conversation.")
+    sum_target.add_argument("-p", "--period", nargs="+", help="One period label (2026-04-22, 2026_Apr_H1, 2026_Apr, 2026_Q2, 2026), or two single-day values for an inclusive range. The literal 'now' = today, so -p 2026-03-20 now covers from the 20th to today.")
+    sum_target.add_argument("-pn", "--period-now", metavar="DATE", help="Shortcut for `-p DATE now`: summarize stale conversations from DATE through today. e.g. -pn 2026-03-20.")
+    p_sum.add_argument("-w", "--workers", type=int, default=1, help="Parallel claude invocations (default 1; try 4 for bulk runs). Watch for API rate limits.")
+    p_sum.add_argument("-m", "--model", default="sonnet", help="Claude model alias passed to `claude --model` (default: sonnet — fast/cheap, good for extraction). Override with 'opus' if a run reads weak.")
     p_sum.set_defaults(func=_summarize_cmd)
 
     p_syn = sub.add_parser(
@@ -79,12 +79,11 @@ def build_parser() -> argparse.ArgumentParser:
         "half auto-merges into a single 2026_Apr_H1-H2 entry covering the whole month.",
     )
     p_syn.add_argument(
-        "--period",
+        "-p", "--period",
         required=True,
         help="Period label. Examples: 2026_Apr_H1, 2026_Apr_H2, 2026_Apr_H1-H2, 2026_Apr, 2026_Q2, 2026.",
     )
-    p_syn.add_argument("--budget", type=float, default=2.00, help="Max USD per claude invocation (default 2.00).")
-    p_syn.add_argument("--model", default="opus", help="Claude model alias passed to `claude --model` (default: opus — synthesis is the interpretive tier, worth the cost).")
+    p_syn.add_argument("-m", "--model", default="opus", help="Claude model alias passed to `claude --model` (default: opus — synthesis is the interpretive tier, worth the cost).")
     p_syn.set_defaults(func=_synthesize_cmd)
 
     p_cap = sub.add_parser(
@@ -99,7 +98,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="List stale summaries grouped by date, with copy-paste summarize commands.",
     )
     p_stale.add_argument(
-        "--period",
+        "-p", "--period",
         help="Optional period label to scope the list (e.g. 2026_Mar_H2, 2026_Q1, 2026, 2026-03-22). Default: all.",
     )
     p_stale.set_defaults(func=lambda a: __import__("chronicle.stale", fromlist=["run"]).run(a))

@@ -89,6 +89,38 @@ def stale_summary_uuids(state: dict[str, Any]) -> list[str]:
     return [uuid for uuid, c in state["conversations"].items() if summary_stale(c)]
 
 
+def reconcile_summaries(state: dict[str, Any]) -> list[str]:
+    """Clear `summarized_at` (and related fields) for any conversation whose
+    summary file is missing on disk. Called before staleness queries so users
+    can force a re-summary by deleting the .md file.
+
+    Returns the list of UUIDs that got reset. Caller should `save(state)` if
+    the list is non-empty.
+    """
+    from .paths import data_root
+    root = data_root()
+    reset = []
+    for uuid, c in state["conversations"].items():
+        if c.get("deleted_at") or not c.get("summarized_at"):
+            continue
+        sf = c.get("summary_file")
+        if not sf:
+            continue
+        if (root / sf).exists():
+            continue
+        # File is gone — drop the freshness marker so it's stale again.
+        for k in (
+            "summarized_at",
+            "summary_chars",
+            "summary_words",
+            "summary_tokens_est",
+            "compression_ratio",
+        ):
+            c.pop(k, None)
+        reset.append(uuid)
+    return reset
+
+
 def conversations_in_period(
     state: dict[str, Any], range_start: str, range_end: str
 ) -> list[tuple[str, dict[str, Any]]]:

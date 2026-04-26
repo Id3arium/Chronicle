@@ -451,7 +451,7 @@ def run(args: Any) -> None:
     tokens_est = _estimate_tokens(total_chars)
     print(
         f"Synthesizing {args.period} ({tier}) · {len(items)} input(s) · "
-        f"~{tokens_est:,} tokens · budget ${args.budget:.2f}"
+        f"~{tokens_est:,} tokens"
     )
     if tokens_est > BUDGET_TOKENS and len(items) > 1:
         raise SystemExit(
@@ -485,7 +485,7 @@ def run(args: Any) -> None:
     try:
         output = run_claude(
             _instruction_file(), input_text,
-            max_budget_usd=args.budget, model=model,
+            model=model,
         )
     except ClaudeInvocationError as e:
         print(f"claude error: {e}")

@@ -30,7 +30,7 @@ def run_claude(
     instruction_path: Path,
     input_text: str,
     *,
-    max_budget_usd: float = 0.50,
+    max_budget_usd: float | None = None,
     timeout_seconds: int = 600,
     model: str | None = None,
 ) -> str:
@@ -53,8 +53,6 @@ def run_claude(
         binary,
         "-p",
         prompt,
-        "--max-budget-usd",
-        str(max_budget_usd),
         "--disallowedTools",
         "Bash,Write,Edit,NotebookEdit",
         # Override the user's global defaultMode. If they have plan-mode set
@@ -65,6 +63,8 @@ def run_claude(
         "--permission-mode",
         "default",
     ]
+    if max_budget_usd is not None:
+        cmd.extend(["--max-budget-usd", str(max_budget_usd)])
     if model:
         cmd.extend(["--model", model])
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}

@@ -80,25 +80,85 @@ def _read_pending_context() -> str:
     return "(no pending.md — nothing flagged by recent ingest)"
 
 
-def _select_targets(state: dict[str, Any], args: Any) -> list[str]:
+def _select_targets(state: dict[str, Any], args: Any) -> tuple[list[str], int, str]:
+    """Return (stale_uuids, total_in_scope, scope_desc).
+
+    total_in_scope counts non-deleted conversations matching the filter,
+    regardless of staleness — lets the caller distinguish "no conversations
+    here" from "all caught up". scope_desc is a human label for messages.
+    """
     convs = state["conversations"]
+    # -pn / --period-now is sugar for `-p <date> now`. Normalize early so the
+    # rest of this function only has to handle args.period.
+    if getattr(args, "period_now", None):
+        args.period = [args.period_now, "now"]
     if args.uuid:
         if args.uuid not in convs:
             raise SystemExit(
                 f"UUID {args.uuid} not in state.json. Run `chronicle ingest` first "
                 f"or double-check the UUID."
             )
-        return [args.uuid]
+        c = convs[args.uuid]
+        in_scope = 0 if c.get("deleted_at") else 1
+        stale = [args.uuid] if state_mod.summary_stale(c) else []
+        return stale, in_scope, f"UUID {args.uuid[:8]}"
     if args.period:
         from .calendar import PeriodParseError, parse_period
-        try:
-            _tier, rs, re_ = parse_period(args.period)
-        except PeriodParseError as e:
-            raise SystemExit(str(e))
+        labels = args.period if isinstance(args.period, list) else [args.period]
+        if len(labels) == 1:
+            try:
+                if labels[0].lower() == "now":
+                    from datetime import date as _date
+                    today = _date.today().isoformat()
+                    _tier, rs, re_ = "day", today, today
+                else:
+                    _tier, rs, re_ = parse_period(labels[0])
+            except PeriodParseError as e:
+                raise SystemExit(str(e))
+        elif len(labels) == 2:
+            # Two-arg form: inclusive range. Both must be single-day labels;
+            # mixing tiers (e.g. day → quarter) is ambiguous and rejected.
+            # The literal "now" is allowed in either slot to mean today's
+            # date, so `-p 2026-03-20 now` covers everything from the 20th
+            # forward. (Past `now` works too, since fresh files just skip.)
+            from datetime import date as _date
+            today_iso = _date.today().isoformat()
+
+            def _resolve(lbl: str) -> tuple[str, str, str]:
+                if lbl.lower() == "now":
+                    return ("day", today_iso, today_iso)
+                return parse_period(lbl)
+
+            try:
+                t1, s1, _e1 = _resolve(labels[0])
+                t2, _s2, e2 = _resolve(labels[1])
+            except PeriodParseError as e:
+                raise SystemExit(str(e))
+            if t1 != "day" or t2 != "day":
+                raise SystemExit(
+                    f"Two-argument --period requires single-day labels (YYYY-MM-DD or 'now'), "
+                    f"got '{labels[0]}' ({t1}) and '{labels[1]}' ({t2}). "
+                    f"For wider spans use a single label like 2026_Mar_H2."
+                )
+            if s1 > e2:
+                raise SystemExit(
+                    f"Range start {labels[0]} is after end {labels[1]}. Swap them."
+                )
+            rs, re_ = s1, e2
+        else:
+            raise SystemExit(
+                f"--period takes 1 or 2 values, got {len(labels)}: {labels}"
+            )
         rows = state_mod.conversations_in_period(state, rs, re_)
-        return [uuid for uuid, c in rows if state_mod.summary_stale(c)]
-    # default: all stale
-    return state_mod.stale_summary_uuids(state)
+        stale = [uuid for uuid, c in rows if state_mod.summary_stale(c)]
+        scope = (
+            f"{labels[0]} → {labels[1]}" if len(labels) == 2 else labels[0]
+        )
+        return stale, len(rows), f"period {scope} ({rs} → {re_})"
+    # default: all stale across every tracked conversation
+    alive = [(u, c) for u, c in convs.items() if not c.get("deleted_at")]
+    stale = [u for u, c in alive if state_mod.summary_stale(c)]
+    return stale, len(alive), "all tracked conversations"
 
 
 def summarize_one(
@@ -106,7 +166,6 @@ def summarize_one(
     state: dict[str, Any],
     *,
     pending_context: str,
-    budget_usd: float,
     model: str | None = None,
 ) -> bool:
     """Returns True on success, False on failure. Mutates state on success."""
@@ -149,7 +208,6 @@ def summarize_one(
         output = run_claude(
             _instruction_file(),
             input_text,
-            max_budget_usd=budget_usd,
             model=model,
         )
     except ClaudeInvocationError as e:
@@ -197,13 +255,38 @@ def run(args: Any) -> None:
     ensure_dirs()
     state = state_mod.load()
 
+    # Reconcile state with disk before deciding what's stale: if a summary's
+    # .md file was deleted (or moved), drop the freshness marker so the work
+    # gets redone. Without this, `summarized_at` could lie about reality.
+    reset = state_mod.reconcile_summaries(state)
+    if reset:
+        state_mod.save(state)
+        print(
+            f"Reconciled state: {len(reset)} summary file(s) missing on disk, "
+            f"marked stale.",
+            flush=True,
+        )
+
     try:
-        targets = _select_targets(state, args)
+        targets, in_scope, scope_desc = _select_targets(state, args)
     except SystemExit:
         raise
 
     if not targets:
-        print("Nothing to summarize. All summaries are fresh.")
+        if in_scope == 0:
+            print(
+                f"No conversations found in {scope_desc}. "
+                f"Nothing was ingested for that scope — check `chronicle stale` "
+                f"or widen the range."
+            )
+        else:
+            print(
+                f"All {in_scope} conversation(s) in {scope_desc} are already "
+                f"summarized and fresh (summarized_at ≥ updated_at). "
+                f"To force a re-summary: delete the .md file under "
+                f"data/summaries/ (state will reconcile on next run), or "
+                f"delete `summarized_at` for the UUID in data/state.json."
+            )
         return
 
     # Fail fast if claude isn't installed before we start processing.
@@ -220,7 +303,7 @@ def run(args: Any) -> None:
     model = getattr(args, "model", None) or "sonnet"
     print(
         f"Summarizing {len(targets)} conversation(s). "
-        f"Model: {model} · Budget per call: ${args.budget:.2f} · workers: {workers}"
+        f"Model: {model} · workers: {workers}"
     )
     succeeded = 0
     failed = 0
@@ -232,7 +315,7 @@ def run(args: Any) -> None:
         # only guards the save.
         ok = summarize_one(
             uuid, state, pending_context=pending_context,
-            budget_usd=args.budget, model=model,
+            model=model,
         )
         if ok:
             with state_lock:

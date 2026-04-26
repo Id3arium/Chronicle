@@ -18,6 +18,15 @@ from .calendar import PeriodParseError, parse_period
 def run(args: Any) -> None:
     state = state_mod.load()
 
+    # Reflect ground truth: if a summary file was deleted on disk, the
+    # corresponding state entry is no longer fresh.
+    reset = state_mod.reconcile_summaries(state)
+    if reset:
+        state_mod.save(state)
+        print(
+            f"(reconciled: {len(reset)} summary file(s) missing on disk)\n"
+        )
+
     if args.period:
         try:
             _tier, rs, re_ = parse_period(args.period)
