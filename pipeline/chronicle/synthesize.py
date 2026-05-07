@@ -362,10 +362,14 @@ def run(args: Any) -> None:
     ensure_dirs()
     state = state_mod.load()
 
+    from .calendar import canonical_label
     try:
         tier, _rs0, _re0 = parse_period(args.period)
     except PeriodParseError as e:
         raise SystemExit(str(e))
+
+    # Canonicalize: 2026-03-h1 → 2026_Mar_H1, etc.
+    args.period = canonical_label(args.period)
 
     if tier == "day":
         raise SystemExit(
@@ -388,6 +392,25 @@ def run(args: Any) -> None:
     # canonical label, not what the user typed.
     tier, range_start, range_end = parse_period(args.period)
 
+    skip_prompts = getattr(args, "yes", False)
+
+    # Warn if the period hasn't ended yet.
+    from datetime import date as _date
+    today = _date.today().isoformat()
+    if today < range_end and not skip_prompts:
+        print(
+            f"⚠ Period {args.period} ends on {range_end}, but today is {today}.\n"
+            f"  Conversations may still be added before the period closes.\n"
+            f"  Synthesizing now means you'll likely need to re-synthesize later."
+        )
+        try:
+            answer = input("  Continue anyway? [y/N] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            answer = ""
+        if answer not in ("y", "yes"):
+            print("Aborted.")
+            return
+
     # Idempotency: if a fresh entry already exists at this label, no work.
     existing_entry = state.get("entries", {}).get(args.period)
     if existing_entry and not state_mod.entry_stale(
@@ -409,16 +432,24 @@ def run(args: Any) -> None:
         )
         if stale_uuids:
             print(
-                f"{len(stale_uuids)} conversation(s) in {args.period} have stale "
-                f"summaries. Run this first:\n"
-                f"  chronicle summarize --period {args.period}\n"
-                f"…then re-run synthesize. Stale UUIDs:"
+                f"⚠ {len(stale_uuids)} conversation(s) in {args.period} have stale "
+                f"summaries:"
             )
             for u in stale_uuids[:10]:
-                print(f"  · {u[:8]}")
+                c = state["conversations"].get(u, {})
+                t = (c.get("title") or "(untitled)")[:50]
+                print(f"  · {u[:8]} — {t}")
             if len(stale_uuids) > 10:
                 print(f"  … and {len(stale_uuids) - 10} more")
-            raise SystemExit(1)
+            print(f"\n  Fix with: chronicle sum -d {range_start} {range_end}")
+            if not skip_prompts:
+                try:
+                    answer = input("  Continue without them? [y/N] ").strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    answer = ""
+                if answer not in ("y", "yes"):
+                    print("Aborted. Summarize first, then re-run synthesize.")
+                    return
         if not items:
             print(
                 f"No non-deleted conversations in {args.period} "
@@ -490,6 +521,26 @@ def run(args: Any) -> None:
     except ClaudeInvocationError as e:
         print(f"claude error: {e}")
         raise SystemExit(1)
+
+    # Append bibliography: list of source conversations/entries that fed
+    # this synthesis. Makes it possible to trace claims back to sources.
+    bib_lines = ["\n\n---\n\n## Sources\n"]
+    if tier == "half":
+        for it in items:
+            # heading is "## Title — uuid"
+            heading = it["heading"].lstrip("# ").strip()
+            sm = it.get("source_metrics", {})
+            sig = ""
+            # Try to pull significance from the summary frontmatter
+            fm = parse_frontmatter(it["body"])
+            if fm.get("significance"):
+                sig = f" [{fm['significance']}]"
+            bib_lines.append(f"- {heading}{sig}")
+    else:
+        for it in items:
+            heading = it["heading"].lstrip("# ").strip()
+            bib_lines.append(f"- {heading}")
+    output = output.rstrip() + "\n".join(bib_lines) + "\n"
 
     # Compute and inject the frontmatter BEFORE writing. Two groups:
     # - identity/period metadata (period, tier, range, created_at, input count)

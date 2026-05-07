@@ -54,25 +54,26 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="chronicle", description="Chronicle pipeline.")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_ingest = sub.add_parser("ingest", help="Split export JSON into per-conversation files.")
+    p_ingest = sub.add_parser("ingest", aliases=["ing"], help="Split export JSON into per-conversation files.")
     p_ingest.add_argument("path", nargs="?", help="Specific export file. Default: every unprocessed file in data/exports/.")
     p_ingest.set_defaults(func=_ingest_cmd)
 
-    p_status = sub.add_parser("status", help="Print pipeline state.")
+    p_status = sub.add_parser("status", aliases=["sts"], help="Print pipeline state.")
     p_status.set_defaults(func=_status_cmd)
 
-    p_sum = sub.add_parser("summarize", help="Run Claude over conversations to generate summaries.")
+    p_sum = sub.add_parser("summarize", aliases=["sum"], help="Run Claude over conversations to generate summaries.")
     sum_target = p_sum.add_mutually_exclusive_group()
     sum_target.add_argument("-u", "--uuid", help="Summarize a single conversation by UUID.")
     sum_target.add_argument("-a", "--all-stale", action="store_true", help="Default. Summarize every stale conversation.")
-    sum_target.add_argument("-p", "--period", nargs="+", help="One period label (2026-04-22, 2026_Apr_H1, 2026_Apr, 2026_Q2, 2026), or two single-day values for an inclusive range. The literal 'now' = today, so -p 2026-03-20 now covers from the 20th to today.")
-    sum_target.add_argument("-pn", "--period-now", metavar="DATE", help="Shortcut for `-p DATE now`: summarize stale conversations from DATE through today. e.g. -pn 2026-03-20.")
+    sum_target.add_argument("-d", "--date", nargs="+", help="One date/period label (2026-04-22, 2026_Apr_H1, 2026_Apr, 2026_Q2, 2026), or two single-day values for an inclusive range. The literal 'now' = today, so -d 2026-03-20 now covers from the 20th to today.")
+    sum_target.add_argument("-dn", "--date-now", metavar="DATE", help="Shortcut for `-d DATE now`: summarize stale conversations from DATE through today. e.g. -dn 2026-03-20.")
+    p_sum.add_argument("-f", "--force", action="store_true", help="Force re-summarize even if already fresh. Deletes existing summary file(s) first.")
     p_sum.add_argument("-w", "--workers", type=int, default=1, help="Parallel claude invocations (default 1; try 4 for bulk runs). Watch for API rate limits.")
     p_sum.add_argument("-m", "--model", default="sonnet", help="Claude model alias passed to `claude --model` (default: sonnet — fast/cheap, good for extraction). Override with 'opus' if a run reads weak.")
     p_sum.set_defaults(func=_summarize_cmd)
 
     p_syn = sub.add_parser(
-        "synthesize",
+        "synthesize", aliases=["syn"],
         help="Build a period entry. Tier inferred from the label "
         "(2026_Apr_H1=half, 2026_Apr=full-month half, 2026_Q2=quarter, 2026=year). "
         "If a month is sparse (<10 conversations), a half-tier run on either "
@@ -84,17 +85,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="Period label. Examples: 2026_Apr_H1, 2026_Apr_H2, 2026_Apr_H1-H2, 2026_Apr, 2026_Q2, 2026.",
     )
     p_syn.add_argument("-m", "--model", default="opus", help="Claude model alias passed to `claude --model` (default: opus — synthesis is the interpretive tier, worth the cost).")
+    p_syn.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompts (period not yet ended, stale summaries).")
     p_syn.set_defaults(func=_synthesize_cmd)
 
     p_cap = sub.add_parser(
-        "capacity",
+        "capacity", aliases=["cap"],
         help="Preview what a synthesize call would pack (char count, tokens, missing children).",
     )
     p_cap.add_argument("period", help="Period label (same format as synthesize --period).")
     p_cap.set_defaults(func=lambda a: __import__("chronicle.capacity", fromlist=["run"]).run(a))
 
+    p_ls = sub.add_parser(
+        "ls",
+        help="Tabular view of conversations with orig/summary word counts and compression ratio.",
+    )
+    p_ls.add_argument(
+        "-p", "--period",
+        help="Scope to a period label (e.g. 2026_Mar_H2, 2026_Q1, 2026). Default: all.",
+    )
+    p_ls.add_argument(
+        "-s", "--significance",
+        help="Filter by significance: high, medium (or med), low.",
+    )
+    p_ls.set_defaults(func=lambda a: __import__("chronicle.ls", fromlist=["run"]).run(a))
+
     p_stale = sub.add_parser(
-        "stale",
+        "stale", aliases=["stl"],
         help="List stale summaries grouped by date, with copy-paste summarize commands.",
     )
     p_stale.add_argument(

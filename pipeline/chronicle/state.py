@@ -90,35 +90,54 @@ def stale_summary_uuids(state: dict[str, Any]) -> list[str]:
 
 
 def reconcile_summaries(state: dict[str, Any]) -> list[str]:
-    """Clear `summarized_at` (and related fields) for any conversation whose
-    summary file is missing on disk. Called before staleness queries so users
-    can force a re-summary by deleting the .md file.
+    """Sync state with disk for every summarized conversation:
 
-    Returns the list of UUIDs that got reset. Caller should `save(state)` if
-    the list is non-empty.
+    - If the summary .md is missing: drop the freshness marker so the
+      conversation falls back into the stale list (allows "force re-run by
+      deleting the file").
+    - If the summary .md exists but `significance` isn't in state yet: read it
+      from the frontmatter and backfill. Also backfills any other frontmatter
+      fields we track (future-proofing).
+
+    Returns the list of UUIDs that were changed. Caller should `save(state)`
+    if the list is non-empty.
     """
+    from .metrics import parse_frontmatter
     from .paths import data_root
     root = data_root()
-    reset = []
+    changed = []
     for uuid, c in state["conversations"].items():
         if c.get("deleted_at") or not c.get("summarized_at"):
             continue
         sf = c.get("summary_file")
         if not sf:
             continue
-        if (root / sf).exists():
+        path = root / sf
+        if not path.exists():
+            # File is gone — drop the freshness marker so it's stale again.
+            for k in (
+                "summarized_at",
+                "summary_chars",
+                "summary_words",
+                "summary_tokens_est",
+                "compression_ratio",
+                "significance",
+            ):
+                c.pop(k, None)
+            changed.append(uuid)
             continue
-        # File is gone — drop the freshness marker so it's stale again.
-        for k in (
-            "summarized_at",
-            "summary_chars",
-            "summary_words",
-            "summary_tokens_est",
-            "compression_ratio",
-        ):
-            c.pop(k, None)
-        reset.append(uuid)
-    return reset
+        # File exists — backfill significance (and anything else from frontmatter
+        # that we care about but don't yet have in state).
+        if c.get("significance") is None:
+            try:
+                fm = parse_frontmatter(path.read_text(encoding="utf-8"))
+                sig = fm.get("significance")
+                if sig:
+                    c["significance"] = sig
+                    changed.append(uuid)
+            except OSError:
+                pass
+    return changed
 
 
 def conversations_in_period(

@@ -56,4 +56,4 @@ def run(args: Any) -> None:
         for uuid, c in items:
             title = (c.get("title") or "(untitled)")[:70]
             print(f"  · {uuid[:8]} — \"{title}\"")
-        print(f"    → uv run chronicle summarize --period {day}\n")
+        print(f"    → uv run chronicle sum -d {day}\n")

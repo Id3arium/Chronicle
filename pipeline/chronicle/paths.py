@@ -78,6 +78,10 @@ def deleted_summaries_dir() -> Path:
     return summaries_dir() / "deleted"
 
 
+def diffs_dir() -> Path:
+    return data_root() / "diffs"
+
+
 def entries_dir() -> Path:
     return data_root() / "entries"
 
@@ -108,6 +112,7 @@ def ensure_dirs() -> None:
         deleted_conversations_dir(),
         summaries_dir(),
         deleted_summaries_dir(),
+        diffs_dir(),
         entries_dir(),
     ):
         d.mkdir(parents=True, exist_ok=True)

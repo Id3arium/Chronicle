@@ -44,6 +44,22 @@ def parse_period(label: str) -> tuple[str, str, str]:
     Both abbreviated-month (2026_Apr) and numeric-month (2026_04) forms
     are accepted everywhere interchangeably.
     """
+    # Normalize dash-separated half/month forms into canonical underscore form.
+    # Accepts: 2026-03-h1, 2026-03-H1, 2026-03-h2, 2026-03-h1-h2, 2026-03
+    # Also handles case: h1 → H1, q2 → Q2
+    m = re.fullmatch(r"(\d{4})-(0[1-9]|1[0-2])-(h[12](?:-h[12])?)", label, re.IGNORECASE)
+    if m:
+        suffix = m.group(3).upper()  # h1 → H1, h1-h2 → H1-H2
+        return parse_period(f"{m.group(1)}_{m.group(2)}_{suffix}")
+    # Bare dash-month: 2026-03 (without day or half suffix)
+    m = re.fullmatch(r"(\d{4})-(0[1-9]|1[0-2])", label)
+    if m:
+        return parse_period(f"{m.group(1)}_{m.group(2)}")
+    # Dash-separated quarter: 2026-q2 or 2026-Q2
+    m = re.fullmatch(r"(\d{4})-([qQ][1-4])", label)
+    if m:
+        return parse_period(f"{m.group(1)}_{m.group(2).upper()}")
+
     # Single-day form: 2026-04-22 or 2026_04_22. Only used for
     # `summarize --period` to scope a run to one calendar day. Synthesize
     # never targets day tier — half is the lowest entry tier.
@@ -152,6 +168,36 @@ def child_tier(tier: str) -> str | None:
 def canonical_merged_label(year: int, month: int) -> str:
     """The label we produce for an auto-merged sparse month: 2026_Apr_H1-H2."""
     return f"{year}_{MONTH_ABBR[month - 1]}_H1-H2"
+
+
+def canonical_label(label: str) -> str:
+    """Convert any accepted label form to the canonical underscore/abbr form.
+
+    2026-03-h1   → 2026_Mar_H1
+    2026-03      → 2026_Mar
+    2026-q2      → 2026_Q2
+    2026_04_H1   → 2026_Apr_H1
+    2026_Apr_H1  → 2026_Apr_H1  (already canonical, returned as-is)
+    2026         → 2026          (already canonical)
+    """
+    tier, rs, re_ = parse_period(label)
+    start = date.fromisoformat(rs)
+    if tier == "day":
+        return rs  # ISO date is its own canonical form
+    if tier == "year":
+        return str(start.year)
+    if tier == "quarter":
+        q = (start.month - 1) // 3 + 1
+        return f"{start.year}_Q{q}"
+    # half tier — determine H1, H2, or H1-H2 from the date range
+    abbr = MONTH_ABBR[start.month - 1]
+    end = date.fromisoformat(re_)
+    if start.day == 1 and end.day <= 15:
+        return f"{start.year}_{abbr}_H1"
+    if start.day == 16:
+        return f"{start.year}_{abbr}_H2"
+    # Full month (H1-H2 or bare month alias)
+    return f"{start.year}_{abbr}_H1-H2"
 
 
 def children_for(label: str) -> list[str]:
