@@ -30,8 +30,8 @@ from .claude_invoke import (
 )
 from .metrics import compression_ratio, measure_text
 from .paths import (
+    branches_dir,
     data_root,
-    diffs_dir,
     ensure_dirs,
     instructions_dir,
     pending_file,
@@ -45,34 +45,32 @@ def _instruction_file() -> Path:
     return instructions_dir() / "summarize.txt"
 
 
-def _load_diff(uuid: str, created_at: str) -> dict[str, Any] | None:
-    """Load a diff file if one exists. Returns the parsed diff or None."""
+def _load_branches(uuid: str, created_at: str) -> dict[str, Any] | None:
+    """Load a branch file if one exists. Returns the parsed branches or None."""
     month = (created_at or "unknown")[:7]
-    diff_path = diffs_dir() / month / f"{uuid}.json"
-    if not diff_path.exists():
+    branch_path = branches_dir() / month / f"{uuid}.json"
+    if not branch_path.exists():
         return None
     try:
         import json
-        return json.loads(diff_path.read_text(encoding="utf-8"))
+        return json.loads(branch_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return None
 
 
-def _delete_diff(uuid: str, created_at: str) -> None:
+def _delete_branches(uuid: str, created_at: str) -> None:
     month = (created_at or "unknown")[:7]
-    diff_path = diffs_dir() / month / f"{uuid}.json"
-    if diff_path.exists():
-        diff_path.unlink()
+    branch_path = branches_dir() / month / f"{uuid}.json"
+    if branch_path.exists():
+        branch_path.unlink()
 
 
-def _extract_new_messages(conv_json: str, added_uuids: set[str]) -> str:
-    """Extract only messages with UUIDs in added_uuids, preserving the
-    conversation shell (metadata) but replacing messages."""
+def _format_branch_messages(messages: list[dict[str, Any]]) -> str:
+    """Format a list of raw messages into readable text for the summarizer."""
     import json
-    conv = json.loads(conv_json)
-    new_msgs = [m for m in (conv.get("messages") or []) if m.get("uuid") in added_uuids]
-    conv["messages"] = new_msgs
-    return json.dumps(conv, ensure_ascii=False)
+    # Wrap in a minimal conversation shell so strip_conversation works
+    shell = {"messages": messages}
+    return json.dumps(shell, ensure_ascii=False)
 
 
 def _inject_metrics(
@@ -268,68 +266,108 @@ def summarize_one(
     )
 
     # --- Incremental summarization check ---
-    # If a diff file exists from ingest (append-only update to an already-
-    # summarized conversation), we can pass the old summary + just the new
-    # messages instead of re-processing the entire conversation.
+    # If a branch file exists from ingest (conversation was updated after
+    # being summarized), we can pass the old summary + the divergent
+    # branches instead of re-processing the entire conversation.
     created_at = conv_meta.get("created_at") or ""
-    diff = _load_diff(uuid, created_at)
+    branches = _load_branches(uuid, created_at)
     old_summary_path = (
         (data_root() / conv_meta["summary_file"])
         if conv_meta.get("summary_file")
         else None
     )
     use_incremental = (
-        diff is not None
-        and diff.get("is_append_only")
+        branches is not None
         and significance in ("medium", "high")
         and old_summary_path is not None
         and old_summary_path.exists()
-        and len(diff.get("added_message_uuids", [])) > 0
     )
 
-    if diff and not use_incremental:
+    if branches and not use_incremental:
         reason = (
-            "edits/deletions detected" if not diff.get("is_append_only")
-            else "low significance" if significance == "low"
+            "low significance" if significance == "low"
             else "no existing summary"
         )
-        print(f"    diff exists but not eligible for incremental ({reason}) → full re-summarize", flush=True)
-        _delete_diff(uuid, created_at)
+        print(f"    branches exist but not eligible for incremental ({reason}) → full re-summarize", flush=True)
+        _delete_branches(uuid, created_at)
 
     if use_incremental:
         old_summary = old_summary_path.read_text(encoding="utf-8")
-        added_set = set(diff["added_message_uuids"])
-        new_messages_json = _extract_new_messages(conv_text, added_set)
-        new_messages_stripped = strip_conversation(new_messages_json)
-        new_tokens = estimate_tokens(new_messages_stripped)
-        print(
-            f"    incremental: {len(added_set)} new message(s) (~{new_tokens:,} tokens) "
-            f"+ existing summary ({len(old_summary.split()):,} words)",
-            flush=True,
-        )
+        is_append = branches.get("is_append_only", False)
+        old_branch = branches.get("old_branch_messages", [])
+        new_branch = branches.get("new_branch_messages", [])
+
+        new_branch_json = _format_branch_messages(new_branch)
+        new_branch_stripped = strip_conversation(new_branch_json)
+        new_tokens = estimate_tokens(new_branch_stripped)
+
+        if is_append:
+            print(
+                f"    incremental (append-only): {len(new_branch)} new message(s) "
+                f"(~{new_tokens:,} tokens) + existing summary "
+                f"({len(old_summary.split()):,} words)",
+                flush=True,
+            )
+            branch_instructions = (
+                f"# Incremental summary update (append-only)\n\n"
+                f"This conversation was previously summarized. New messages have "
+                f"been appended at the end. Below is the existing summary followed "
+                f"by ONLY the new messages.\n\n"
+                f"Your job:\n"
+                f"1. Read the existing summary to understand what was already covered\n"
+                f"2. Read the new messages\n"
+                f"3. Produce a complete updated summary — keep the existing material "
+                f"(you may lightly edit for coherence), append new sections for new "
+                f"material, and update frontmatter if the new content changes "
+                f"significance, categories, or topics\n"
+                f"4. If the new messages are trivial (\"thanks\", \"ok\"), keep the "
+                f"summary essentially unchanged — just update last_active in "
+                f"frontmatter\n\n"
+                f"---\n\n"
+                f"# Existing summary\n\n{old_summary}\n\n"
+                f"---\n\n"
+                f"# New messages\n\n{new_branch_stripped}\n"
+            )
+        else:
+            old_branch_json = _format_branch_messages(old_branch)
+            old_branch_stripped = strip_conversation(old_branch_json)
+            old_tokens = estimate_tokens(old_branch_stripped)
+            print(
+                f"    incremental (edit): {len(old_branch)} removed / "
+                f"{len(new_branch)} added message(s) "
+                f"(~{old_tokens:,} / ~{new_tokens:,} tokens) from fork point "
+                f"(after {branches.get('common_count', '?')} shared messages) "
+                f"+ existing summary ({len(old_summary.split()):,} words)",
+                flush=True,
+            )
+            branch_instructions = (
+                f"# Incremental summary update (conversation edited)\n\n"
+                f"This conversation was previously summarized, but has since been "
+                f"edited. The conversation diverges from the original after message "
+                f"{branches.get('common_count', '?')}. Below is the existing "
+                f"summary, then the OLD branch (removed messages) and the NEW "
+                f"branch (replacement messages).\n\n"
+                f"Your job:\n"
+                f"1. Read the existing summary\n"
+                f"2. Read the OLD branch to identify which parts of the summary "
+                f"correspond to removed content — cut or revise those parts\n"
+                f"3. Read the NEW branch to identify new material — integrate it\n"
+                f"4. Produce a complete updated summary with correct frontmatter\n"
+                f"5. If the changes are trivial, keep the summary mostly unchanged\n\n"
+                f"---\n\n"
+                f"# Existing summary\n\n{old_summary}\n\n"
+                f"---\n\n"
+                f"# OLD branch (removed messages)\n\n{old_branch_stripped}\n\n"
+                f"---\n\n"
+                f"# NEW branch (replacement messages)\n\n{new_branch_stripped}\n"
+            )
+
         input_text = (
             f"# Pending work context\n\n{pending_context}\n\n"
             f"---\n\n"
             f"{metrics_block}\n"
             f"---\n\n"
-            f"# Incremental summary update\n\n"
-            f"This conversation was previously summarized. New messages have "
-            f"been appended. Below is the existing summary followed by ONLY "
-            f"the new messages.\n\n"
-            f"Your job:\n"
-            f"1. Read the existing summary to understand what was already covered\n"
-            f"2. Read the new messages\n"
-            f"3. Produce a complete updated summary — keep the existing material "
-            f"(you may lightly edit for coherence), append new sections for new "
-            f"material, and update frontmatter if the new content changes "
-            f"significance, categories, or topics\n"
-            f"4. If the new messages are trivial (\"thanks\", \"ok\"), keep the "
-            f"summary essentially unchanged — just update last_active in "
-            f"frontmatter\n\n"
-            f"---\n\n"
-            f"# Existing summary\n\n{old_summary}\n\n"
-            f"---\n\n"
-            f"# New messages\n\n{new_messages_stripped}\n"
+            f"{branch_instructions}"
         )
         try:
             output = run_claude(
@@ -340,7 +378,7 @@ def summarize_one(
         except ClaudeInvocationError as e:
             print(f"  ✗ {uuid[:8]} — claude error (incremental): {e}", flush=True)
             return False
-        _delete_diff(uuid, created_at)
+        _delete_branches(uuid, created_at)
     elif not needs_chunking(conv_text, significance=significance):
         # Normal path: single call, full conversation.
         input_text = (
@@ -381,11 +419,24 @@ def summarize_one(
         # This avoids the "re-summarize and compress" failure mode where
         # asking the model to append to a running summary causes it to
         # rewrite + shrink prior content instead.
+        #
+        # Segments are cached to disk so a rate-limit hit on a later segment
+        # or the stitch pass doesn't lose completed work. On retry, cached
+        # segments are loaded and only remaining ones are processed.
+        seg_cache_dir = data_root() / "segments" / uuid
+        seg_cache_dir.mkdir(parents=True, exist_ok=True)
+
         segment_summaries: list[str] = []
-        # Give each segment a concrete word target so the model doesn't
-        # default to ~700 words regardless of how much material is there.
         per_segment_target = max(high_floor // n_chunks, 800)
         for i, chunk in enumerate(chunks, 1):
+            seg_file = seg_cache_dir / f"segment_{i}.md"
+            if seg_file.exists():
+                cached = seg_file.read_text(encoding="utf-8").strip()
+                if cached:
+                    segment_summaries.append(cached)
+                    print(f"    segment {i}/{n_chunks} loaded from cache ({len(cached.split()):,} words)", flush=True)
+                    continue
+
             carryover = (
                 f"# Note: chunked conversation (segment {i} of {n_chunks})\n\n"
                 f"This conversation is too long for a single pass. You are "
@@ -419,9 +470,12 @@ def summarize_one(
                 )
             except ClaudeInvocationError as e:
                 print(f"  ✗ {uuid[:8]} — claude error on segment {i}/{n_chunks}: {e}", flush=True)
+                print(f"    ({i - 1} segment(s) cached — re-run to resume)", flush=True)
                 return False
-            segment_summaries.append(seg.strip())
-            print(f"    segment {i}/{n_chunks} done ({len(seg.split()):,} words)", flush=True)
+            seg_text = seg.strip()
+            segment_summaries.append(seg_text)
+            seg_file.write_text(seg_text, encoding="utf-8")
+            print(f"    segment {i}/{n_chunks} done ({len(seg_text.split()):,} words)", flush=True)
 
         # Final stitch pass: concatenated segments → unified summary with
         # frontmatter. This pass sees only the segments, not the raw
@@ -463,9 +517,14 @@ def summarize_one(
             )
         except ClaudeInvocationError as e:
             print(f"  ✗ {uuid[:8]} — claude error on stitch pass: {e}", flush=True)
+            print(f"    (segments cached in {seg_cache_dir} — re-run to retry stitch)", flush=True)
             return False
         stitch_words = len(output.split())
         print(f"    stitch done ({stitch_words:,} words)", flush=True)
+
+        # Success — clean up segment cache.
+        import shutil
+        shutil.rmtree(seg_cache_dir, ignore_errors=True)
 
     # Write summary. Month derived from created_at so summaries mirror
     # conversations/ layout.
@@ -507,8 +566,8 @@ def summarize_one(
     if sig:
         conv_meta["significance"] = sig
 
-    # Clean up diff file if it wasn't already consumed by the incremental path.
-    _delete_diff(uuid, created_at)
+    # Clean up branch file if it wasn't already consumed by the incremental path.
+    _delete_branches(uuid, created_at)
 
     print(f"  ✓ {uuid[:8]} — done → {rel}", flush=True)
     return True
@@ -625,6 +684,12 @@ def run(args: Any) -> None:
 
     # One final rewrite of pending.md so processed UUIDs fall off.
     pending_mod.write_pending(state)
+
+    # Rebuild search index after successful work.
+    if succeeded > 0:
+        from .index import build_index
+        build_index(state)
+
     print(f"\nDone. {succeeded} ok, {failed} failed.")
     if failed:
         print("Re-run `chronicle summarize --uuid <uuid>` to retry specific failures.")

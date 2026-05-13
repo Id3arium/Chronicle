@@ -79,7 +79,12 @@ def deleted_summaries_dir() -> Path:
 
 
 def diffs_dir() -> Path:
+    """Legacy — kept for migration cleanup only."""
     return data_root() / "diffs"
+
+
+def branches_dir() -> Path:
+    return data_root() / "branches"
 
 
 def entries_dir() -> Path:
@@ -113,6 +118,7 @@ def ensure_dirs() -> None:
         summaries_dir(),
         deleted_summaries_dir(),
         diffs_dir(),
+        branches_dir(),
         entries_dir(),
     ):
         d.mkdir(parents=True, exist_ok=True)

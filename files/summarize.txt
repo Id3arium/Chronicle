@@ -119,18 +119,24 @@ Two blocks separated by "---":
    `updated_at`, `project_name`, `messages[]`).
 
 **Mode 2: Incremental update**
-The input header says "Incremental summary update." You receive:
+The input header says "Incremental summary update." There are two
+sub-modes:
 
-1. The existing summary (already written from a prior pass)
-2. Only the NEW messages appended since that summary was written
+**2a — Append-only:** The conversation grew (new messages at the end).
+You receive the existing summary + only the new messages. Keep the
+existing material (lightly edit for coherence), append new sections
+for new material, update frontmatter if significance/categories/topics
+changed. If the new messages are trivial ("thanks", "ok"), keep the
+summary essentially unchanged — just update `last_active`.
 
-Your job: produce a complete updated summary. Keep the existing
-material (you may lightly edit for coherence), append new sections
-for new material, and update frontmatter if the new content changes
-significance, categories, or topics. If the new messages are trivial
-("thanks", "ok", a quick clarification), keep the summary essentially
-unchanged — just update `last_active` in frontmatter. The output
-format is identical to a full summary.
+**2b — Edited conversation:** The conversation diverged from the
+original at some point. You receive the existing summary + two
+branches: the OLD branch (messages that were removed) and the NEW
+branch (messages that replaced them). Read the old branch to find
+which parts of the summary to cut or revise, then read the new branch
+to integrate replacement material. Produce a complete updated summary.
+
+In both sub-modes the output format is identical to a full summary.
 
 **Mode 3: Chunked segments**
 The input header says "chunked conversation (segment N of M)." You

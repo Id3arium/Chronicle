@@ -25,11 +25,11 @@ from . import state as state_mod
 from .metrics import conversation_prose, measure_text
 from .notify import notify
 from .paths import (
+    branches_dir,
     conversations_dir,
     data_root,
     deleted_conversations_dir,
     deleted_summaries_dir,
-    diffs_dir,
     ensure_dirs,
     exports_dir,
     stem_for,
@@ -82,17 +82,21 @@ def _message_uuids(conv: dict[str, Any]) -> list[str]:
     return [m["uuid"] for m in (conv.get("messages") or []) if m.get("uuid")]
 
 
-def _compute_diff(
+def _extract_branches(
     uuid: str, old_path: Path, new_conv: dict[str, Any]
 ) -> dict[str, Any] | None:
-    """Compare old conversation file with new conversation data.
+    """Compare old and new conversation, extract divergent branches.
 
-    Returns a diff dict if there are changes, None if identical.
-    Diff structure:
-      - added_message_uuids: messages only in new (appended or inserted)
-      - removed_message_uuids: messages only in old (deleted)
-      - common_message_uuids: messages in both
-      - is_append_only: True if no removals and common messages are a prefix
+    Instead of storing abstract UUID diffs, we save the actual message
+    content from each branch after their fork point. This gives the
+    summarizer everything it needs without cross-referencing UUIDs.
+
+    Returns a branch dict if there are changes, None if identical.
+    Branch structure:
+      - old_branch_messages: messages only in old (from fork point onward)
+      - new_branch_messages: messages only in new (from fork point onward)
+      - common_count: number of shared prefix messages
+      - is_append_only: True if old branch is empty (just new messages added)
     """
     if not old_path.exists():
         return None
@@ -101,47 +105,47 @@ def _compute_diff(
     except (json.JSONDecodeError, OSError):
         return None
 
-    old_uuids = _message_uuids(old_conv)
-    new_uuids = _message_uuids(new_conv)
+    old_msgs = old_conv.get("messages") or []
+    new_msgs = new_conv.get("messages") or []
 
-    old_set = set(old_uuids)
-    new_set = set(new_uuids)
+    old_uuids = [m.get("uuid") for m in old_msgs]
+    new_uuids = [m.get("uuid") for m in new_msgs]
 
-    added = [u for u in new_uuids if u not in old_set]
-    removed = [u for u in old_uuids if u not in new_set]
-    common = [u for u in new_uuids if u in old_set]
+    # Find the shared prefix length (messages in common at the start).
+    common_count = 0
+    for o, n in zip(old_uuids, new_uuids):
+        if o == n:
+            common_count += 1
+        else:
+            break
 
-    if not added and not removed:
-        return None
+    old_tail = old_msgs[common_count:]
+    new_tail = new_msgs[common_count:]
 
-    # Append-only: no removals, and the common messages appear in the same
-    # order at the start of the new conversation.
-    is_append_only = (
-        not removed
-        and common == new_uuids[: len(common)]
-        and common == old_uuids
-    )
+    if not old_tail and not new_tail:
+        return None  # identical
 
-    diff = {
+    is_append_only = len(old_tail) == 0 and len(new_tail) > 0
+
+    return {
         "uuid": uuid,
-        "diffed_at": now_iso(),
-        "old_message_count": len(old_uuids),
-        "new_message_count": len(new_uuids),
-        "added_message_uuids": added,
-        "removed_message_uuids": removed,
-        "common_message_uuids": common,
+        "branched_at": now_iso(),
+        "common_count": common_count,
+        "old_branch_message_count": len(old_tail),
+        "new_branch_message_count": len(new_tail),
+        "old_branch_messages": old_tail,
+        "new_branch_messages": new_tail,
         "is_append_only": is_append_only,
     }
-    return diff
 
 
-def _write_diff(uuid: str, diff: dict[str, Any], created_at: str) -> None:
+def _write_branches(uuid: str, branches: dict[str, Any], created_at: str) -> None:
     month = _month_key(created_at)
-    out_dir = diffs_dir() / month
+    out_dir = branches_dir() / month
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{uuid}.json"
     out_path.write_text(
-        json.dumps(diff, indent=2, ensure_ascii=False) + "\n",
+        json.dumps(branches, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
 
@@ -201,12 +205,14 @@ def ingest_export(export_path: Path, state: dict[str, Any]) -> dict[str, list[st
         if existing_rel and existing_rel.startswith("conversations/deleted/"):
             existing_rel = None
 
-        # Compute diff before overwriting the old file.
+        # Extract divergent branches before overwriting the old file.
+        # Only worth doing if we already have a summary (otherwise we'd
+        # just do a full summarize anyway).
         if existing_rel and existing and existing.get("summarized_at"):
             old_path = data_root() / existing_rel
-            diff = _compute_diff(uuid, old_path, conv)
-            if diff:
-                _write_diff(uuid, diff, conv.get("created_at") or "")
+            branches = _extract_branches(uuid, old_path, conv)
+            if branches:
+                _write_branches(uuid, branches, conv.get("created_at") or "")
 
         out_path, char_count = _write_conversation(conv, existing_rel)
         prose = measure_text(conversation_prose(conv))

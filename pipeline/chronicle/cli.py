@@ -109,6 +109,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_ls.set_defaults(func=lambda a: __import__("chronicle.ls", fromlist=["run"]).run(a))
 
+    p_find = sub.add_parser(
+        "find", aliases=["f"],
+        help="Search conversations by keyword, tag, topic, or text content.",
+    )
+    p_find.add_argument("query", nargs="+", help="Search terms (matched against title, topics, tags, categories, and summary body).")
+    p_find.add_argument("-p", "--period", help="Scope search to a period label.")
+    p_find.add_argument("-s", "--significance", help="Filter by significance: high, medium (or med), low.")
+    p_find.add_argument("--body", action="store_true", help="Also search summary body text (slower, default: frontmatter only).")
+    p_find.add_argument("-n", "--limit", type=int, default=20, help="Max results to show (default: 20).")
+    p_find.set_defaults(func=lambda a: __import__("chronicle.find", fromlist=["run"]).run(a))
+
+    p_index = sub.add_parser(
+        "index", aliases=["idx"],
+        help="Rebuild the search index (data/index.json). Auto-runs after summarize.",
+    )
+    p_index.set_defaults(func=lambda a: __import__("chronicle.index", fromlist=["run"]).run(a))
+
     p_stale = sub.add_parser(
         "stale", aliases=["stl"],
         help="List stale summaries grouped by date, with copy-paste summarize commands.",
