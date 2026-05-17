@@ -21,7 +21,7 @@ from typing import Any
 
 from . import state as state_mod
 from .metrics import parse_frontmatter
-from .paths import data_root
+from .paths import data_root, index_file
 
 
 _STOP_WORDS = frozenset({
@@ -56,8 +56,7 @@ def _add_to_inverted(
 
 
 def index_path():
-    from pathlib import Path
-    return data_root() / "index.json"
+    return index_file()
 
 
 def build_index(state: dict[str, Any] | None = None) -> dict[str, Any]:

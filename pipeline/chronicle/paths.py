@@ -54,8 +54,29 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parent.parent.parent
 
 
+def vault_root() -> Path:
+    """The Obsidian vault: the human-readable tree (summaries, entries) plus
+    the raw conversations the summary→`## Full conversation` wikilinks point
+    at. Obsidian only resolves links to files INSIDE the vault, so the
+    conversation leaves must live here even though they aren't read directly.
+    Open this directory as the vault in Obsidian."""
+    return repo_root() / "library"
+
+
+def work_root() -> Path:
+    """Machine-only pipeline plumbing: the inbox queue, incremental-summary
+    scratch (branches/segments), and the state/index/pending files. Never
+    opened in Obsidian — kept out of the vault so it doesn't clutter what
+    you read."""
+    return repo_root() / "pipeline-data"
+
+
 def data_root() -> Path:
-    return repo_root() / "data"
+    """Back-compat alias. State stores conversation/summary/entry paths
+    relative to the vault root (`summaries/…`, `conversations/…`,
+    `entries/…`), so resolving them against the vault keeps every stored
+    path valid after the library/ + pipeline-data/ split."""
+    return vault_root()
 
 
 def exports_dir() -> Path:
@@ -64,11 +85,11 @@ def exports_dir() -> Path:
 
 
 def inbox_dir() -> Path:
-    return data_root() / "inbox"
+    return work_root() / "inbox"
 
 
 def conversations_dir() -> Path:
-    return data_root() / "conversations"
+    return vault_root() / "conversations"
 
 
 def deleted_conversations_dir() -> Path:
@@ -76,7 +97,7 @@ def deleted_conversations_dir() -> Path:
 
 
 def summaries_dir() -> Path:
-    return data_root() / "summaries"
+    return vault_root() / "summaries"
 
 
 def deleted_summaries_dir() -> Path:
@@ -85,30 +106,38 @@ def deleted_summaries_dir() -> Path:
 
 def diffs_dir() -> Path:
     """Legacy — kept for migration cleanup only."""
-    return data_root() / "diffs"
+    return work_root() / "diffs"
 
 
 def branches_dir() -> Path:
-    return data_root() / "branches"
+    return work_root() / "branches"
+
+
+def segments_dir() -> Path:
+    return work_root() / "segments"
 
 
 def entries_dir() -> Path:
-    return data_root() / "entries"
+    return vault_root() / "entries"
 
 
 def state_file() -> Path:
-    return data_root() / "state.json"
+    return work_root() / "state.json"
+
+
+def index_file() -> Path:
+    return work_root() / "index.json"
 
 
 def pending_file() -> Path:
-    return data_root() / "pending.md"
+    return work_root() / "pending.md"
 
 
 def glossary_file() -> Path:
     """Project/term glossary loaded ONLY on synthesize passes. Summaries stay
     self-contained — they get a 'never invent meanings, carry verbatim' rule
     instead, to keep summarize-tier token cost flat."""
-    return data_root() / "glossary.md"
+    return vault_root() / "glossary.md"
 
 
 def instructions_dir() -> Path:

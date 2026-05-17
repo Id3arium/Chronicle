@@ -1,4 +1,7 @@
 data/
+library/
+pipeline-data/
+chronicle-data-backup-*.tar.gz
 artifacts/
 node_modules/
 __pycache__/

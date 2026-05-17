@@ -417,7 +417,8 @@ def summarize_one(
         # Segments are cached to disk so a rate-limit hit on a later segment
         # or the stitch pass doesn't lose completed work. On retry, cached
         # segments are loaded and only remaining ones are processed.
-        seg_cache_dir = data_root() / "segments" / uuid
+        from .paths import segments_dir
+        seg_cache_dir = segments_dir() / uuid
         seg_cache_dir.mkdir(parents=True, exist_ok=True)
 
         segment_summaries: list[str] = []
