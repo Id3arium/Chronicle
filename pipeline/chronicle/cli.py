@@ -70,7 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
     sum_target.add_argument("-dn", "--date-now", metavar="DATE", help="Shortcut for `-d DATE now`: summarize stale conversations from DATE through today. e.g. -dn 2026-03-20.")
     p_sum.add_argument("-f", "--force", action="store_true", help="Force re-summarize even if already fresh. Deletes existing summary file(s) first.")
     p_sum.add_argument("-w", "--workers", type=int, default=1, help="Parallel claude invocations (default 1; try 4 for bulk runs). Watch for API rate limits.")
-    p_sum.add_argument("-m", "--model", default="sonnet", help="Claude model alias passed to `claude --model` (default: sonnet — fast/cheap, good for extraction). Override with 'opus' if a run reads weak.")
+    p_sum.add_argument("-m", "--model", default="claude-sonnet-4-6", help="Model ID passed to `claude --model` and recorded in frontmatter for provenance (default: claude-sonnet-4-6 — fast/cheap, good for extraction). Pin an explicit ID so the recorded model is exact, not an alias that drifts. Override with claude-opus-4-7 if a run reads weak.")
     p_sum.set_defaults(func=_summarize_cmd)
 
     p_syn = sub.add_parser(
@@ -85,7 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="Period label. Examples: 2026_Apr_H1, 2026_Apr_H2, 2026_Apr_H1-H2, 2026_Apr, 2026_Q2, 2026.",
     )
-    p_syn.add_argument("-m", "--model", default="opus", help="Claude model alias passed to `claude --model` (default: opus — synthesis is the interpretive tier, worth the cost).")
+    p_syn.add_argument("-m", "--model", default="claude-opus-4-7", help="Model ID passed to `claude --model` and recorded in frontmatter for provenance (default: claude-opus-4-7 — synthesis is the interpretive tier, worth the cost). Pin an explicit ID so provenance is exact.")
     p_syn.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompts (period not yet ended, stale summaries).")
     p_syn.set_defaults(func=_synthesize_cmd)
 

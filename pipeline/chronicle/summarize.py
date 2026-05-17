@@ -537,7 +537,7 @@ def summarize_one(
     # frontmatter + body, which is fine for ratio purposes.
     summary_metrics = measure_text(output)
     ratio = compression_ratio(summary_metrics["chars"], orig_chars)
-    used_model = model or "sonnet"
+    used_model = model or "claude-sonnet-4-6"
     output = _inject_metrics(output, orig_words, summary_metrics, ratio, used_model)
     # Atomic write: never leave a half-finished summary on disk if something
     # crashes between bytes. Write to a sibling .tmp and rename on success.
@@ -641,7 +641,7 @@ def run(args: Any) -> None:
 
     pending_context = _read_pending_context()
     workers = max(1, int(getattr(args, "workers", 1) or 1))
-    model = getattr(args, "model", None) or "sonnet"
+    model = getattr(args, "model", None) or "claude-sonnet-4-6"
     print(
         f"Summarizing {len(targets)} conversation(s). "
         f"Model: {model} · workers: {workers}"

@@ -528,7 +528,7 @@ def run(args: Any) -> None:
         + "\n\n---\n\n".join(f"{it['heading']}\n\n{it['body']}" for it in items)
     )
 
-    model = getattr(args, "model", None) or "opus"
+    model = getattr(args, "model", None) or "claude-opus-4-7"
     print(f"  Model: {model}")
     try:
         output = run_claude(
