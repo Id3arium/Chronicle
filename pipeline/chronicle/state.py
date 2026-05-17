@@ -24,7 +24,7 @@ Shape:
       "range_end": "YYYY-MM-DD"
     }
   },
-  "processed_exports": ["<export filename>", ...]
+  "processed_imports": ["<export filename>", ...]
 }
 
 Staleness is derived, never stored:
@@ -54,14 +54,18 @@ def load() -> dict[str, Any]:
             "last_ingest": None,
             "conversations": {},
             "entries": {},
-            "processed_exports": [],
+            "processed_imports": [],
         }
     with path.open("r", encoding="utf-8") as f:
         data = json.load(f)
     # Backfill missing top-level keys so older state files keep working.
     data.setdefault("conversations", {})
     data.setdefault("entries", {})
-    data.setdefault("processed_exports", [])
+    data.setdefault("processed_imports", [])
+    # Migrate legacy key if present.
+    if "processed_exports" in data and "processed_imports" not in data:
+        data["processed_imports"] = data["processed_exports"]
+    data.setdefault("processed_exports", [])  # keep for backward compat
     return data
 
 

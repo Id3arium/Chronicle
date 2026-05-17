@@ -93,9 +93,9 @@ Structure (all tiers use the same shape; depth scales with tier):
 
 Narrative prose. Who was Alejandro during this period? What was the
 dominant mood, condition, arc? Grounded in the specifics of what actually
-happened — not a list of projects. At weekly tier, 1–2 paragraphs.
-Monthly, 2–4. Quarterly/yearly, 3–6. Honest, specific, no softening.
-See the voice guidance below.
+happened — not a list of projects. Length proportional to how much
+actually happened — a quiet period is short, a dense one is long.
+Honest, specific, no softening. See the voice guidance below.
 
 ### What had your attention
 
@@ -157,7 +157,7 @@ Two jobs, both mandatory:
    themselves, not just the attention around them.
 
 Be direct. No congratulation, no hedging. Name problems as problems.
-Scale: weekly 1–2 paragraphs; monthly 3–4; quarterly/yearly 4–6.
+Length proportional to how much there is to say.
 
 ### Your reflection (delta)
 
@@ -199,6 +199,32 @@ On voice:
   genuinely good, name it as genuinely good.
 
 =====================================================================
+ATTENTION DISTRIBUTION — PARETO, NOT UNIFORM
+=====================================================================
+
+Ideas and conversations follow a heavy-tailed distribution. A few inputs
+in any period carry most of the intellectual weight; the majority are
+incremental or routine. Your synthesis should reflect this shape:
+
+- As you read the inputs, develop a sense of which ones are genuinely
+  load-bearing — which conversations produced new positions, frameworks,
+  decisions, or insights that will still matter in 6 months.
+- Give those inputs proportionally more space and detail in the entry.
+  A top-5% conversation might deserve a full paragraph; a bottom-30%
+  conversation might only appear as a name in the Portfolio table.
+- The "What had your attention" section should reflect this: themes are
+  already ordered by weight, but the space given to each theme should
+  also be unequal. The top theme might get 4 sentences; the bottom one
+  might get 1.
+- Don't flatten significance by giving everything equal treatment.
+  Equal treatment is a compression failure — it means you're averaging
+  rather than selecting.
+
+This is moderate-tail, not extreme: the bottom items still appear (in the
+Portfolio, in counts), they just don't get narrative real estate. Nothing
+disappears — it just gets proportional attention.
+
+=====================================================================
 COMPRESSION AT HIGHER TIERS
 =====================================================================
 
@@ -207,5 +233,11 @@ their inputs — sometimes much shorter. The compression ratio is a feature.
 A quarterly entry that reads like a concatenation of three monthlies has
 failed. The move is: find the arc across the inputs, name it, and let
 specifics from any single input surface only when they carry the arc.
+
+Compression is structural, not mechanical — reorganize around what's
+retrievable, not what's chronological. Drop conversational scaffolding,
+redundancy across conversations, and detail that only mattered in the
+moment. Keep positions arrived at, decisions made, frameworks constructed,
+and the trajectory of thinking (how it moved, not each step).
 
 End of entry. Output nothing after the `*Entry closed: …*` line.

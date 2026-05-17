@@ -1,7 +1,7 @@
-"""launchd agent for auto-ingesting files dropped into data/exports/.
+"""launchd agent for auto-ingesting files dropped into data/inbox/.
 
 WatchPaths fires on kernel-level FS events — zero idle CPU. The agent just
-runs `chronicle ingest` once whenever a file in data/exports/ changes, then
+runs `chronicle ingest` once whenever a file in data/inbox/ changes, then
 exits. Opt-in: users who want manual control never install it.
 """
 
@@ -12,7 +12,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from .paths import exports_dir
+from .paths import inbox_dir
 
 AGENT_LABEL = "com.chronicle.autoingest"
 
@@ -38,12 +38,12 @@ def _chronicle_binary() -> str:
 def install() -> None:
     binary = _chronicle_binary()
     log_dir().mkdir(parents=True, exist_ok=True)
-    exports_dir().mkdir(parents=True, exist_ok=True)
+    inbox_dir().mkdir(parents=True, exist_ok=True)
 
     plist = {
         "Label": AGENT_LABEL,
         "ProgramArguments": [binary, "ingest"],
-        "WatchPaths": [str(exports_dir())],
+        "WatchPaths": [str(inbox_dir())],
         "RunAtLoad": False,
         "StandardOutPath": str(log_dir() / "autoingest.out.log"),
         "StandardErrorPath": str(log_dir() / "autoingest.err.log"),
@@ -65,7 +65,7 @@ def install() -> None:
         )
 
     print(f"✓ Installed launchd agent {AGENT_LABEL}")
-    print(f"  Watching: {exports_dir()}")
+    print(f"  Watching: {inbox_dir()}")
     print(f"  Plist:    {path}")
     print(f"  Logs:     {log_dir()}")
 

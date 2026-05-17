@@ -26,6 +26,12 @@ class ClaudeInvocationError(RuntimeError):
         self.stderr = stderr
 
 
+def _is_rate_limit_error(result: subprocess.CompletedProcess) -> bool:
+    """Check if a failed claude invocation looks like a rate limit."""
+    combined = ((result.stderr or "") + (result.stdout or "")).lower()
+    return any(s in combined for s in ("rate", "429", "overloaded", "too many"))
+
+
 def run_claude(
     instruction_path: Path,
     input_text: str,
@@ -33,11 +39,16 @@ def run_claude(
     max_budget_usd: float | None = None,
     timeout_seconds: int = 600,
     model: str | None = None,
+    max_retries: int = 3,
+    retry_wait: int = 30,
 ) -> str:
     """Run `claude -p` with the instruction file prepended to input_text.
 
     Returns Claude's stdout (the model's response). Raises on non-zero exit or
     missing binary. No file writes happen here — caller writes the output.
+
+    On rate-limit errors, retries up to max_retries times with retry_wait
+    seconds between attempts.
     """
     binary = shutil.which("claude")
     if not binary:
@@ -68,23 +79,29 @@ def run_claude(
     if model:
         cmd.extend(["--model", model])
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-            env=env,
-        )
-    except subprocess.TimeoutExpired as e:
-        raise ClaudeInvocationError(
-            f"claude timed out after {timeout_seconds}s. Re-run with a smaller "
-            f"input, or increase timeout via --timeout."
-        ) from e
 
-    if result.returncode != 0:
-        # Rate-limit and budget messages sometimes land on stdout, sometimes
-        # stderr. Surface both tails so the cause is visible without re-running.
+    import time
+    last_error: ClaudeInvocationError | None = None
+
+    for attempt in range(max_retries):
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                env=env,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise ClaudeInvocationError(
+                f"claude timed out after {timeout_seconds}s. Re-run with a smaller "
+                f"input, or increase timeout via --timeout."
+            ) from e
+
+        if result.returncode == 0:
+            return result.stdout
+
+        # Build the error for reporting / retry decision.
         err_tail = (result.stderr or "").strip().splitlines()[-20:]
         out_tail = (result.stdout or "").strip().splitlines()[-20:]
         parts = [f"claude exited with code {result.returncode}."]
@@ -92,9 +109,21 @@ def run_claude(
             parts.append("Last stderr:\n" + "\n".join(err_tail))
         if out_tail:
             parts.append("Last stdout:\n" + "\n".join(out_tail))
-        raise ClaudeInvocationError(
+        last_error = ClaudeInvocationError(
             "\n".join(parts),
             stderr=result.stderr or "",
         )
 
-    return result.stdout
+        if _is_rate_limit_error(result) and attempt < max_retries - 1:
+            print(
+                f"    rate limited — waiting {retry_wait}s "
+                f"(attempt {attempt + 1}/{max_retries})",
+                flush=True,
+            )
+            time.sleep(retry_wait)
+            continue
+
+        # Non-rate-limit error, or final attempt — don't retry.
+        break
+
+    raise last_error

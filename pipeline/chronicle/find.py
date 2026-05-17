@@ -1,12 +1,13 @@
-"""`chronicle find` — search conversations by keyword, tag, topic, or body text.
+"""`chronicle find` — search conversations by keyword, topic, or body text.
 
-Searches frontmatter fields (title, topics, tags, categories) by default.
-With --body, also searches summary prose. Results are ranked by number of
-query terms matched, then by significance (high > medium > low).
+Uses the inverted index in data/index.json for fast weighted search.
+Each query term is looked up in the inverted index, which returns matching
+uuids with weights (keyword=3, topic=2, title=1). Results are scored by
+summing weights across matched terms, then ranked by score → significance
+→ date.
 
-Uses data/index.json for fast frontmatter-only searches (one file read
-instead of N). Falls back to per-file reads if index is missing or --body
-is specified.
+With --body, falls back to per-file reads for full-text search.
+With --period, scopes to a date range (uses per-file reads).
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from typing import Any
 
 from . import state as state_mod
 from .calendar import PeriodParseError, parse_period
-from .index import load_index
+from .index import load_index, _tokenize
 from .metrics import parse_frontmatter
 from .paths import data_root
 
@@ -30,35 +31,74 @@ def _normalize_sig(s: str | None) -> str:
     return "medium" if s == "med" else s
 
 
-def _search_indexed_entry(
-    entry: dict[str, Any],
+def _search_inverted(
+    idx: dict[str, Any],
     terms: list[str],
-) -> dict[str, Any] | None:
-    """Search a single index entry (frontmatter only, no disk reads)."""
-    searchable = " ".join([
-        entry.get("title", ""),
-        entry.get("topics", ""),
-        entry.get("tags", ""),
-        entry.get("categories", ""),
-        entry.get("project", ""),
-    ]).lower()
+    sig_filter: str | None,
+) -> list[dict[str, Any]]:
+    """Search using the inverted index. Returns scored results.
+    Score = sum of (source_weight * idf) for each matched token."""
+    inverted = idx.get("inverted", {})
+    idf = idx.get("idf", {})
+    entries_by_uuid = {e["uuid"]: e for e in idx["entries"]}
 
-    matches = [t for t in terms if t in searchable]
-    if not matches:
-        return None
+    # Tokenize query terms the same way the index was built.
+    query_tokens = []
+    for term in terms:
+        query_tokens.extend(_tokenize(term))
+    if not query_tokens:
+        query_tokens = terms  # fallback: use raw terms
 
-    return {
-        "uuid": entry["uuid"],
-        "title": entry.get("title") or "(untitled)",
-        "created_at": entry.get("created_at", "")[:10],
-        "significance": _normalize_sig(entry.get("significance")),
-        "topics": entry.get("topics", ""),
-        "tags": entry.get("tags", ""),
-        "categories": entry.get("categories", ""),
-        "matches": matches,
-        "match_count": len(matches),
-        "summary_file": entry.get("summary_file", ""),
-    }
+    # Accumulate scores per uuid.
+    scores: dict[str, dict[str, Any]] = {}  # uuid → {score, matched_terms}
+    for token in query_tokens:
+        hits = inverted.get(token, [])
+        token_idf = idf.get(token, 1.0)
+        for hit in hits:
+            uuid = hit["uuid"]
+            weight = hit["weight"]
+            if uuid not in scores:
+                scores[uuid] = {"score": 0.0, "matched_terms": set()}
+            scores[uuid]["score"] += weight * token_idf
+            scores[uuid]["matched_terms"].add(token)
+
+    # Small multipliers for significance and conversation length so they
+    # break ties without overriding IDF-based relevance.
+    # Significance: high=1.15, medium=1.0, low=0.85
+    # Length: log-scaled boost from summary word count, capped at ~1.2x
+    import math
+    SIG_BOOST = {"high": 1.15, "medium": 1.0, "low": 0.85}
+
+    results = []
+    for uuid, info in scores.items():
+        entry = entries_by_uuid.get(uuid)
+        if not entry:
+            continue
+        sig = _normalize_sig(entry.get("significance"))
+        if sig_filter and sig != sig_filter:
+            continue
+        base_score = info["score"]
+        sig_mult = SIG_BOOST.get(sig, 1.0)
+        # log2(words/100) gives ~1.0 at 200 words, ~3.3 at 1000, ~4.6 at 2500.
+        # Divide by 5 and add 1 to get a gentle 1.0–1.9 range.
+        words = entry.get("summary_words") or 100
+        length_mult = 1.0 + min(math.log2(max(words, 100) / 100), 5) / 5
+        final_score = base_score * sig_mult * length_mult
+
+        results.append({
+            "uuid": uuid,
+            "title": entry.get("title") or "(untitled)",
+            "created_at": entry.get("created_at", "")[:10],
+            "significance": sig,
+            "topics": entry.get("topics", ""),
+            "keywords": entry.get("keywords", ""),
+            "categories": entry.get("categories", ""),
+            "matches": sorted(info["matched_terms"]),
+            "score": final_score,
+            "summary_file": entry.get("summary_file", ""),
+        })
+
+    return results
 
 
 def _search_conversation(
@@ -82,11 +122,11 @@ def _search_conversation(
             fm = parse_frontmatter(summary_text)
 
     topics = (fm.get("topics") or "").lower()
-    tags = (fm.get("tags") or "").lower()
+    keywords = (fm.get("keywords") or fm.get("tags") or "").lower()
     categories = (fm.get("categories") or c.get("categories", "")).lower()
     project = (c.get("project_name") or fm.get("project") or "").lower()
 
-    searchable = f"{title} {topics} {tags} {categories} {project}"
+    searchable = f"{title} {topics} {keywords} {categories} {project}"
 
     if search_body and summary_text:
         body = summary_text
@@ -106,10 +146,10 @@ def _search_conversation(
         "created_at": (c.get("created_at") or "")[:10],
         "significance": sig,
         "topics": fm.get("topics") or "",
-        "tags": fm.get("tags") or "",
+        "keywords": fm.get("keywords") or fm.get("tags") or "",
         "categories": categories,
         "matches": matches,
-        "match_count": len(matches),
+        "score": len(matches),
         "summary_file": sf,
     }
 
@@ -124,18 +164,40 @@ def run(args: Any) -> None:
         if sig_filter == "med":
             sig_filter = "medium"
 
-    # Fast path: use pre-built index for frontmatter-only searches.
+    # Fast path: use inverted index.
     idx = load_index() if not search_body else None
     results = []
 
-    if idx and not args.period:
-        # Index-based search: one file read, no per-summary disk access.
+    if idx and idx.get("inverted") and not args.period:
+        # Inverted-index search: O(1) per query token.
+        results = _search_inverted(idx, terms, sig_filter)
+    elif idx and not args.period:
+        # Old-style index without inverted map — fall back to linear scan.
+        # (Shouldn't happen after rebuild, but handles stale index files.)
         for entry in idx["entries"]:
             if sig_filter and _normalize_sig(entry.get("significance")) != sig_filter:
                 continue
-            hit = _search_indexed_entry(entry, terms)
-            if hit:
-                results.append(hit)
+            searchable = " ".join([
+                entry.get("title", ""),
+                entry.get("topics", ""),
+                entry.get("keywords", entry.get("tags", "")),
+                entry.get("categories", ""),
+                entry.get("project", ""),
+            ]).lower()
+            matches = [t for t in terms if t in searchable]
+            if matches:
+                results.append({
+                    "uuid": entry["uuid"],
+                    "title": entry.get("title") or "(untitled)",
+                    "created_at": entry.get("created_at", "")[:10],
+                    "significance": _normalize_sig(entry.get("significance")),
+                    "topics": entry.get("topics", ""),
+                    "keywords": entry.get("keywords", entry.get("tags", "")),
+                    "categories": entry.get("categories", ""),
+                    "matches": matches,
+                    "score": len(matches),
+                    "summary_file": entry.get("summary_file", ""),
+                })
     else:
         # Slow path: read state + optionally summary bodies.
         state = state_mod.load()
@@ -160,10 +222,10 @@ def run(args: Any) -> None:
             if hit:
                 results.append(hit)
 
-    # Sort: more matches first, then by significance, then by date desc.
+    # Sort: highest score first, then by significance, then by date desc.
     results.sort(
         key=lambda r: (
-            -r["match_count"],
+            -r["score"],
             SIG_ORDER.get(r["significance"], 1),
             r["created_at"],
         )
@@ -182,12 +244,13 @@ def run(args: Any) -> None:
     for r in results:
         sig_badge = {"high": "▲", "medium": "●", "low": "○"}.get(r["significance"], "?")
         matched = ", ".join(r["matches"])
-        print(f"  {sig_badge} {r['created_at']}  {r['uuid'][:8]}  {r['title'][:60]}")
+        score = r["score"]
+        print(f"  {sig_badge} {r['created_at']}  {r['uuid'][:8]}  {r['title'][:60]}  (score: {score:.1f})")
         print(f"    matched: {matched}")
         if r["topics"]:
             print(f"    topics: {r['topics']}")
-        if r["tags"]:
-            print(f"    tags: {r['tags']}")
+        if r["keywords"]:
+            print(f"    keywords: {r['keywords']}")
         if r["summary_file"]:
             print(f"    → {r['summary_file']}")
         print()

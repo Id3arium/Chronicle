@@ -10,9 +10,9 @@ from pathlib import Path
 def _ingest_cmd(args: argparse.Namespace) -> None:
     from .ingest import ingest_all
     explicit = Path(args.path).expanduser().resolve() if args.path else None
-    totals = ingest_all(explicit)
+    totals = ingest_all(explicit, latest=getattr(args, "latest", False))
     counts = totals["counts"]
-    print(f"Processed {len(totals['files'])} export(s): {', '.join(totals['files']) or '(none)'}")
+    print(f"Processed {len(totals['files'])} file(s): {', '.join(totals['files']) or '(none)'}")
     print(
         f"  Added:     {len(totals['added'])}\n"
         f"  Updated:   {len(totals['updated'])}\n"
@@ -52,10 +52,11 @@ def _uninstall_agent_cmd(args: argparse.Namespace) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="chronicle", description="Chronicle pipeline.")
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command")
 
-    p_ingest = sub.add_parser("ingest", aliases=["ing"], help="Split export JSON into per-conversation files.")
-    p_ingest.add_argument("path", nargs="?", help="Specific export file. Default: every unprocessed file in data/exports/.")
+    p_ingest = sub.add_parser("ingest", aliases=["ing"], help="Import conversation exports from data/inbox/.")
+    p_ingest.add_argument("path", nargs="?", help="Specific file to ingest. Default: every unprocessed file in data/inbox/.")
+    p_ingest.add_argument("-l", "--latest", action="store_true", help="Process only the most recent file in data/inbox/ (by modification time).")
     p_ingest.set_defaults(func=_ingest_cmd)
 
     p_status = sub.add_parser("status", aliases=["sts"], help="Print pipeline state.")
@@ -111,12 +112,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_find = sub.add_parser(
         "find", aliases=["f"],
-        help="Search conversations by keyword, tag, topic, or text content.",
+        help="Search conversations by keyword, topic, or text content.",
     )
-    p_find.add_argument("query", nargs="+", help="Search terms (matched against title, topics, tags, categories, and summary body).")
+    p_find.add_argument("query", nargs="+", help="Search terms (matched against keywords, topics, title via inverted index).")
     p_find.add_argument("-p", "--period", help="Scope search to a period label.")
     p_find.add_argument("-s", "--significance", help="Filter by significance: high, medium (or med), low.")
-    p_find.add_argument("--body", action="store_true", help="Also search summary body text (slower, default: frontmatter only).")
+    p_find.add_argument("--body", action="store_true", help="Also search summary body text (slower, default: index only).")
     p_find.add_argument("-n", "--limit", type=int, default=20, help="Max results to show (default: 20).")
     p_find.set_defaults(func=lambda a: __import__("chronicle.find", fromlist=["run"]).run(a))
 
@@ -125,6 +126,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Rebuild the search index (data/index.json). Auto-runs after summarize.",
     )
     p_index.set_defaults(func=lambda a: __import__("chronicle.index", fromlist=["run"]).run(a))
+
+    p_bkw = sub.add_parser(
+        "backfill-keywords", aliases=["bkw"],
+        help="Extract keywords from existing summaries (one-time migration from tags).",
+    )
+    p_bkw.add_argument("-f", "--force", action="store_true", help="Re-extract even if keywords already exist.")
+    p_bkw.add_argument("-w", "--workers", type=int, default=3, help="Parallel workers (default: 3).")
+    p_bkw.add_argument("-m", "--model", default="haiku", help="Model for keyword extraction (default: haiku).")
+    p_bkw.set_defaults(func=lambda a: __import__("chronicle.backfill_keywords", fromlist=["run"]).run(a))
 
     p_stale = sub.add_parser(
         "stale", aliases=["stl"],
@@ -136,7 +146,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_stale.set_defaults(func=lambda a: __import__("chronicle.stale", fromlist=["run"]).run(a))
 
-    p_install = sub.add_parser("install-agent", help="Install launchd agent that auto-ingests new exports.")
+    p_install = sub.add_parser("install-agent", help="Install launchd agent that auto-ingests new files in data/inbox/.")
     p_install.set_defaults(func=_install_agent_cmd)
     p_uninstall = sub.add_parser("uninstall-agent", help="Remove the launchd agent.")
     p_uninstall.set_defaults(func=_uninstall_agent_cmd)
@@ -147,6 +157,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if not args.command:
+        args.path = None
+        args.latest = True
+        args.func = _ingest_cmd
     try:
         args.func(args)
     except KeyboardInterrupt:

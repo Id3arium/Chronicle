@@ -1,4 +1,4 @@
-"""Parse export JSON files from data/exports/ and split into per-conversation files.
+"""Parse export JSON files from data/inbox/ and split into per-conversation files.
 
 For each conversation in the export:
 - Write data/conversations/YYYY-MM/{uuid}.json (YYYY-MM from created_at).
@@ -31,7 +31,7 @@ from .paths import (
     deleted_conversations_dir,
     deleted_summaries_dir,
     ensure_dirs,
-    exports_dir,
+    inbox_dir,
     stem_for,
     summaries_dir,
 )
@@ -263,24 +263,47 @@ def ingest_export(export_path: Path, state: dict[str, Any]) -> dict[str, list[st
             deleted.append(uuid)
 
     state["last_ingest"] = now_iso()
-    processed = state.setdefault("processed_exports", [])
+    processed = state.setdefault("processed_imports", [])
     if export_path.name not in processed:
         processed.append(export_path.name)
+    # Legacy key migration — also update old key if present so nothing breaks.
+    if "processed_exports" in state:
+        legacy = state["processed_exports"]
+        if export_path.name not in legacy:
+            legacy.append(export_path.name)
 
     return {"added": added, "updated": updated, "deleted": deleted, "unchanged": unchanged}
 
 
-def ingest_all(explicit_path: Path | None = None) -> dict[str, Any]:
-    """Ingest a specific export file, or every unprocessed file in exports/."""
+def ingest_all(
+    explicit_path: Path | None = None,
+    *,
+    latest: bool = False,
+) -> dict[str, Any]:
+    """Ingest export files from data/inbox/.
+
+    - explicit_path: process exactly this file.
+    - latest=True: process only the most recently modified file in inbox/.
+    - Neither: process every unprocessed file.
+    """
     ensure_dirs()
     state = state_mod.load()
-    processed = set(state.get("processed_exports", []))
+    processed = set(
+        state.get("processed_imports", []) + state.get("processed_exports", [])
+    )
 
     if explicit_path is not None:
         targets = [explicit_path]
+    elif latest:
+        candidates = sorted(
+            inbox_dir().glob("chronicle-export-*.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        targets = [candidates[0]] if candidates else []
     else:
         targets = sorted(
-            p for p in exports_dir().glob("chronicle-export-*.json")
+            p for p in inbox_dir().glob("chronicle-export-*.json")
             if p.name not in processed
         )
 

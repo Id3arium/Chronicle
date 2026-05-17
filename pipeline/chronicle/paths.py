@@ -59,7 +59,12 @@ def data_root() -> Path:
 
 
 def exports_dir() -> Path:
-    return data_root() / "exports"
+    """Legacy alias — use inbox_dir()."""
+    return inbox_dir()
+
+
+def inbox_dir() -> Path:
+    return data_root() / "inbox"
 
 
 def conversations_dir() -> Path:
@@ -112,7 +117,7 @@ def instructions_dir() -> Path:
 
 def ensure_dirs() -> None:
     for d in (
-        exports_dir(),
+        inbox_dir(),
         conversations_dir(),
         deleted_conversations_dir(),
         summaries_dir(),

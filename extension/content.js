@@ -206,7 +206,8 @@ if (window.__chronicleExportLoaded) {
   }
 
   function exportFilename(startDate, endDate) {
-    return `chronicle-export-${startDate}-to-${endDate}.json`;
+    const ts = new Date().toISOString().slice(11, 19).replace(/:/g, '');
+    return `chronicle-export-${startDate}-to-${endDate}-${ts}.json`;
   }
 
   function triggerDownload(jsonString, filename) {
@@ -349,7 +350,9 @@ if (window.__chronicleExportLoaded) {
       // date range for explicit ranges.
       let outputFile;
       if (fetchAll) {
-        outputFile = `chronicle-export-all-${new Date().toISOString().slice(0, 10)}.json`;
+        const now = new Date();
+        const ts = now.toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-');
+        outputFile = `chronicle-export-all-${ts}.json`;
       } else {
         outputFile = exportFilename(startDate, endDate);
       }

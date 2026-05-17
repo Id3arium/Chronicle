@@ -163,7 +163,7 @@ last_active: [updated_at]
 project: [project_name, or "general"]
 categories: [one or more, comma-separated, from: software, automation, trading, finance, framework, writing, personal, intellectual, language, meta, other. Most conversations have ONE category. Include a second only if a distinct second domain genuinely had load-bearing weight in the conversation — not because the topic was mentioned. Example: "framework, intellectual" for a conversation that built a framework AND did substantial philosophical work on it. Bad: "software, intellectual" because the user used a metaphor.]
 topics: [2–6 specific, comma-separated topics. Name the things. Good: "STRC mechanics, Luna/UST contrast, overcollateralization math". Bad: "trading, crypto".]
-tags: [2–5 comma-separated indexing tags — like library subject headings. Broader than topics, narrower than categories. Good: "negotiation, real estate, income verification". Bad: "personal" (too broad, that's a category). Think: if someone searched Chronicle for conversations about X, which tags would help them find this one?]
+keywords: [comma-separated search terms — as many as needed. These power Chronicle's search index. Include: people mentioned (Michael Levin), frameworks/theories (FOP, bioelectricity), tools/projects/languages (Chronicle, Python, xcodegen), concepts and their associated domains (if Levin is mentioned, also include bioelectricity and morphogenesis — the concepts he's known for). No cap on count. More is better. Think: what terms would someone search to find this conversation? Include both the specific thing AND the broader domain it lives in.]
 significance: [low | medium | high]
 ---
 

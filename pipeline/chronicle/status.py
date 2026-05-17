@@ -6,7 +6,7 @@ import shutil
 import subprocess
 
 from . import state as state_mod
-from .paths import exports_dir, pending_file
+from .paths import inbox_dir, pending_file
 
 
 def _claude_available() -> tuple[bool, str | None]:
@@ -43,10 +43,12 @@ def print_status() -> None:
         if rs and re_ and state_mod.entry_stale(state, label, rs, re_):
             stale_entries.append(label)
 
-    processed = set(state.get("processed_exports", []))
+    processed = set(
+        state.get("processed_imports", []) + state.get("processed_exports", [])
+    )
     unprocessed = [
         p.name
-        for p in sorted(exports_dir().glob("chronicle-export-*.json"))
+        for p in sorted(inbox_dir().glob("chronicle-export-*.json"))
         if p.name not in processed
     ]
 
@@ -61,7 +63,7 @@ def print_status() -> None:
     if stale_entries:
         for label in stale_entries:
             print(f"  · {label}")
-    print(f"Unprocessed exports in data/exports/: {len(unprocessed)}")
+    print(f"Unprocessed in data/inbox/: {len(unprocessed)}")
     for name in unprocessed:
         print(f"  · {name}")
 
@@ -84,4 +86,4 @@ def print_status() -> None:
     agent = _launchd_installed()
     print(f"launchd agent:    {'installed' if agent else 'not installed'}")
     if not agent:
-        print("  (run `chronicle install-agent` to auto-ingest new exports)")
+        print("  (run `chronicle install-agent` to auto-ingest new files in data/inbox/)")
