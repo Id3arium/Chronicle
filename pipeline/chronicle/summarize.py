@@ -532,6 +532,14 @@ def summarize_one(
         out_path.parent.mkdir(parents=True, exist_ok=True)
     else:
         out_path = out_dir / f"{stem_for(uuid, conv_meta.get('title'), conv_meta.get('created_at'))}.md"
+    # Down-link FIRST: the raw conversation JSON this summary was made from.
+    # It's part of the body, so it must be in place before we measure —
+    # otherwise the stored word count and a later recompute-metrics (which
+    # measures the final body) would disagree. The parent (up) link is NOT
+    # written here — it depends on the sparse-month merge decision only
+    # synthesize knows, so synthesize stamps it later.
+    from .links import set_full_conversation
+    output = set_full_conversation(output, conv_meta["conversation_file"])
     # Measure the BODY only (prose, frontmatter excluded). The frontmatter
     # holds the metrics themselves, so counting it would make the numbers
     # self-referential — and it keeps `recompute-metrics` byte-stable, since

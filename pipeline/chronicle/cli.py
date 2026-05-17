@@ -154,6 +154,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_rcm.set_defaults(func=lambda a: __import__("chronicle.recompute_metrics", fromlist=["run"]).run(a))
 
+    p_bfl = sub.add_parser(
+        "backfill-links", aliases=["bfl"],
+        help="Retrofit Obsidian navigation wikilinks (Full conversation / "
+        "Sources / parent links) onto existing summaries+entries. Idempotent. "
+        "summarize/synthesize emit links themselves going forward.",
+    )
+    p_bfl.set_defaults(func=lambda a: __import__("chronicle.backfill_links", fromlist=["run"]).run(a))
+
     p_install = sub.add_parser("install-agent", help="Install launchd agent that auto-ingests new files in data/inbox/.")
     p_install.set_defaults(func=_install_agent_cmd)
     p_uninstall = sub.add_parser("uninstall-agent", help="Remove the launchd agent.")

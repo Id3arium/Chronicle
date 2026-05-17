@@ -242,6 +242,7 @@ def _gather_half_inputs(
             {
                 "heading": f"## {c.get('title') or '(untitled)'} — {uuid}",
                 "body": text,
+                "file_rel": sum_rel,
                 "chars": len(text),
                 "source_metrics": {
                     "original_words": ow or 0,
@@ -334,6 +335,7 @@ def _gather_rollup_inputs(
             {
                 "heading": f"## {child}",
                 "body": text,
+                "file_rel": e["entry_file"],
                 "chars": len(text),
                 "source_metrics": {
                     # At a rollup tier, the "source" for THIS entry is its
@@ -553,25 +555,13 @@ def run(args: Any) -> None:
         print(f"claude error: {e}")
         raise SystemExit(1)
 
-    # Append bibliography: list of source conversations/entries that fed
-    # this synthesis. Makes it possible to trace claims back to sources.
-    bib_lines = ["\n\n---\n\n## Sources\n"]
-    if tier == "half":
-        for it in items:
-            # heading is "## Title — uuid"
-            heading = it["heading"].lstrip("# ").strip()
-            sm = it.get("source_metrics", {})
-            sig = ""
-            # Try to pull significance from the summary frontmatter
-            fm = parse_frontmatter(it["body"])
-            if fm.get("significance"):
-                sig = f" [{fm['significance']}]"
-            bib_lines.append(f"- {heading}{sig}")
-    else:
-        for it in items:
-            heading = it["heading"].lstrip("# ").strip()
-            bib_lines.append(f"- {heading}")
-    output = output.rstrip() + "\n".join(bib_lines) + "\n"
+    # Down-links: a `## Sources` section of [[wikilinks]] to every child
+    # this entry was synthesized from (summary files for a half, child
+    # entries for a rollup). set_sources is idempotent and runs BEFORE
+    # metrics injection so the body it measures is the final body.
+    from .links import set_sources
+    child_names = [it["file_rel"] for it in items]
+    output = set_sources(output, child_names)
 
     # Compute and inject the frontmatter BEFORE writing. Two groups:
     # - identity/period metadata (period, tier, range, created_at, input count)
@@ -615,6 +605,33 @@ def run(args: Any) -> None:
     if tier != "half":
         entry_record["children"] = children_for(args.period)
     state["entries"][args.period] = entry_record
+
+    # Stamp the parent (up) link into every child this entry consumed. We
+    # own this link because only synthesize knows the correct parent label
+    # — including the sparse-month merged H1-H2 case. Idempotent and
+    # self-healing: a re-synthesis (e.g. sparse→merged) rewrites it to the
+    # new correct parent. Re-stamping changes each child's body, so its
+    # word/ratio metrics drift; run_recompute settles that in one pass
+    # (pure arithmetic, no Claude call).
+    from .links import set_parent_link
+    parent_name = out_path.name
+    stamped = 0
+    for it in items:
+        cp = data_root() / it["file_rel"]
+        if not cp.exists():
+            continue
+        ct = cp.read_text(encoding="utf-8")
+        nt = set_parent_link(ct, parent_name)
+        if nt != ct:
+            ctmp = cp.with_suffix(cp.suffix + ".tmp")
+            ctmp.write_text(nt, encoding="utf-8")
+            os.replace(ctmp, cp)
+            stamped += 1
+    if stamped:
+        from .recompute_metrics import run_recompute
+        run_recompute(state)
+        print(f"  Stamped parent link into {stamped} child file(s).")
+
     state_mod.save(state)
     pending_mod.write_pending(state)
     print(f"✓ {args.period} ({tier}) → {out_path.relative_to(data_root().parent)}")
