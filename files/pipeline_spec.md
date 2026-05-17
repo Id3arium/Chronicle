@@ -1,3 +1,9 @@
+> **HISTORICAL DESIGN SEED — not current docs.** This is the original
+> pre-implementation spec. The system has since diverged significantly
+> (paths, state file, commands, period tiers, the watch mechanism). For
+> how the pipeline actually behaves today, see `pipeline/README.md`.
+> Kept for provenance.
+
 # Chronicle Local Pipeline — Spec
 
 ## Purpose

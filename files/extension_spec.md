@@ -1,3 +1,8 @@
+> **HISTORICAL DESIGN SEED — not current docs.** This is the original
+> pre-implementation spec for the browser extension. The shipped
+> extension may differ. Kept for provenance; treat the code in
+> `extension/` as the source of truth.
+
 # Chronicle Export Extension — Spec
 
 ## Purpose

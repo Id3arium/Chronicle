@@ -8,12 +8,14 @@ Claude Code for summarize and synthesize passes.
 
 ```bash
 # From the repo root:
-pip install -e ./pipeline
+uv venv                       # creates .venv/ (skip if you already have one)
+uv pip install -e ./pipeline
 # Verify:
-chronicle --help
+uv run chronicle --help
 ```
 
-Python 3.11+ required. No third-party dependencies.
+Python 3.11+ required. No third-party dependencies. Uses [uv](https://github.com/astral-sh/uv);
+once installed, invoke the CLI as `uv run chronicle ...` (or activate the venv and run `chronicle`).
 
 ## Directory layout (under `data/`)
 

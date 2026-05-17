@@ -193,19 +193,16 @@ def _build_entry_metrics(
 
 
 def _inject_entry_metrics(output: str, metrics: dict[str, Any]) -> str:
-    """Prepend a frontmatter block with the 5 entry-level metrics. Entries
-    don't natively have frontmatter (they open with `# ... Entry`), so we
-    add one. If a `---` block already exists at the top, merge into it."""
-    metric_lines = "".join(f"{k}: {v}\n" for k, v in metrics.items())
-    text = output.lstrip()
-    if text.startswith("---\n"):
-        rest = text[4:]
-        end = rest.find("\n---")
-        if end != -1:
-            head = text[: 4 + end + 1]
-            tail = text[4 + end + 1 :]
-            return head + metric_lines + tail
-    return f"---\n{metric_lines}---\n\n{output}"
+    """Merge entry-level metrics into the frontmatter. Entries usually open
+    with `# ... Entry` (no frontmatter), so split_frontmatter returns an
+    empty dict and we build a fresh block. If Claude did emit frontmatter,
+    its keys are preserved in order and metrics merged in. Parse-and-
+    reserialize, never splice — a body `---` can't be misread as a fence."""
+    from .metrics import render_with_frontmatter, split_frontmatter
+
+    fields, body = split_frontmatter(output)
+    fields.update(metrics)
+    return render_with_frontmatter(fields, body)
 
 
 # ────────────────── input assembly ──────────────────
@@ -394,14 +391,19 @@ def run(args: Any) -> None:
 
     skip_prompts = getattr(args, "yes", False)
 
-    # Warn if the period hasn't ended yet.
+    # The period is partial if today falls before its end date — more
+    # conversations can still land in range. This drives three things: the
+    # CLI confirmation below, an `is_partial: true` frontmatter flag, and a
+    # prose instruction telling Claude to frame the entry as provisional.
     from datetime import date as _date
     today = _date.today().isoformat()
-    if today < range_end and not skip_prompts:
+    is_partial = today < range_end
+    if is_partial and not skip_prompts:
         print(
             f"⚠ Period {args.period} ends on {range_end}, but today is {today}.\n"
             f"  Conversations may still be added before the period closes.\n"
-            f"  Synthesizing now means you'll likely need to re-synthesize later."
+            f"  Synthesizing now means you'll likely need to re-synthesize later.\n"
+            f"  The entry will be marked is_partial: true (covers through {today})."
         )
         try:
             answer = input("  Continue anyway? [y/N] ").strip().lower()
@@ -499,10 +501,25 @@ def run(args: Any) -> None:
         if glossary_file().exists()
         else "(no glossary file present)"
     )
+    partial_note = (
+        (
+            f"# ⚠ PARTIAL PERIOD\n\n"
+            f"This {tier} is being synthesized BEFORE it has ended. It covers "
+            f"{range_start} through {range_end}, but only conversations up to "
+            f"{today} exist so far. Write the entry as explicitly provisional: "
+            f"state up front that it is a partial {tier} covering through "
+            f"{today}, and frame conclusions as in-progress rather than final. "
+            f"This entry will be regenerated once the period closes.\n\n"
+            f"---\n\n"
+        )
+        if is_partial
+        else ""
+    )
     input_text = (
         f"# Glossary (project/term reference — use when matching, leave verbatim otherwise)\n\n"
         f"{glossary_text}\n\n"
         f"---\n\n"
+        f"{partial_note}"
         f"# Period to synthesize\n\n"
         f"{args.period} — {tier} — {range_start} → {range_end}\n\n"
         f"# Pending / delta context\n\n{pending_text or '(none)'}\n\n"
@@ -553,8 +570,14 @@ def run(args: Any) -> None:
         "range_start": range_start,
         "range_end": range_end,
         "synthesized_at": now_iso(),
+        "model": model,
         "input_count": len(items),
     }
+    if is_partial:
+        # Only emitted when true. A complete entry simply omits the key, so
+        # `fm.get("is_partial")` is falsy and old entries stay valid.
+        identity["is_partial"] = "true"
+        identity["partial_through"] = today
     output = _inject_entry_metrics(output, {**identity, **entry_metrics})
 
     out_path = entries_dir() / f"{args.period}_Entry.md"
@@ -571,6 +594,8 @@ def run(args: Any) -> None:
         "range_start": range_start,
         "range_end": range_end,
         "entry_chars": len(output),
+        "is_partial": is_partial,
+        "model": model,
         **entry_metrics,
     }
     if tier != "half":

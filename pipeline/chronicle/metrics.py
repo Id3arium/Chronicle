@@ -55,37 +55,56 @@ def compression_ratio(summary_chars: int, original_chars: int) -> float:
     return round(summary_chars / original_chars, 4)
 
 
-def parse_frontmatter(text: str) -> dict[str, str]:
-    """Extract the `key: value` pairs from a leading `---\\n...\\n---` block.
-    Returns {} if no frontmatter is found. Values stay as strings — caller
-    converts to int/float as needed."""
+def split_frontmatter(text: str) -> tuple[dict[str, str], str]:
+    """Split a document into (frontmatter_dict, body).
+
+    The closing fence is the first line that is *exactly* `---` (after the
+    opening `---\\n`). This is the single source of truth for "where does
+    frontmatter end" — it does NOT substring-search for `\\n---`, so a `---`
+    thematic break inside the prose body can never be mistaken for the
+    closing fence. If there is no valid frontmatter block, returns
+    ({}, original_text_unchanged).
+
+    Frontmatter values stay as strings; callers convert as needed. Key
+    insertion order follows the source block.
+    """
     t = text.lstrip()
     if not t.startswith("---\n"):
-        return {}
-    rest = t[4:]
-    end = rest.find("\n---")
-    if end == -1:
-        return {}
-    block = rest[:end]
+        return {}, text
+    lines = t[4:].split("\n")
+    close_idx = None
+    for i, line in enumerate(lines):
+        if line.strip() == "---":
+            close_idx = i
+            break
+    if close_idx is None:
+        return {}, text
     out: dict[str, str] = {}
-    for line in block.splitlines():
+    for line in lines[:close_idx]:
         if ":" not in line:
             continue
         k, _, v = line.partition(":")
         out[k.strip()] = v.strip()
-    return out
+    body = "\n".join(lines[close_idx + 1:]).lstrip("\n")
+    return out, body
+
+
+def render_with_frontmatter(fields: dict[str, Any], body: str) -> str:
+    """Inverse of split_frontmatter: serialize a `---` block from `fields`
+    (in dict insertion order) followed by the body. Deterministic — no
+    string splicing into existing output."""
+    block = "".join(f"{k}: {v}\n" for k, v in fields.items())
+    return f"---\n{block}---\n\n{body}"
+
+
+def parse_frontmatter(text: str) -> dict[str, str]:
+    """Extract the `key: value` pairs from the leading frontmatter block.
+    Returns {} if none. Thin wrapper over split_frontmatter."""
+    return split_frontmatter(text)[0]
 
 
 def entry_body(text: str) -> str:
-    """Return the markdown body of an entry/summary with frontmatter stripped.
-    Used for entry word counts so the metrics block doesn't count itself."""
-    t = text.lstrip()
-    if not t.startswith("---\n"):
-        return text
-    rest = t[4:]
-    end = rest.find("\n---")
-    if end == -1:
-        return text
-    # Skip past the closing fence + newline.
-    after = rest[end + len("\n---"):]
-    return after.lstrip("\n")
+    """Return the markdown body with frontmatter stripped. Used for entry
+    word counts so the metrics block doesn't count itself."""
+    fm, body = split_frontmatter(text)
+    return body if fm or body != text else text

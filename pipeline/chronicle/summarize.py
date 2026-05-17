@@ -78,28 +78,22 @@ def _inject_metrics(
     orig_words: int,
     summary_metrics: dict[str, int],
     ratio: float,
+    model: str,
 ) -> str:
-    """Append length metrics inside the frontmatter block.
+    """Merge length metrics + the producing model into the frontmatter.
 
-    Looks for the first `---` block at the top. If found, inserts metric lines
-    just before its closing `---`. If not found, prepends a fresh block.
+    Parse → mutate dict → reserialize, so a `---` thematic break in the
+    summary body can never be mistaken for the closing fence. Existing
+    keys Claude wrote are preserved in order; ours are appended.
     """
-    metric_lines = (
-        f"original_words: {orig_words}\n"
-        f"summary_words: {summary_metrics['words']}\n"
-        f"compression_ratio: {ratio}\n"
-    )
-    text = output.lstrip()
-    if text.startswith("---\n"):
-        # Find the closing fence.
-        rest = text[4:]
-        end = rest.find("\n---")
-        if end != -1:
-            head = text[: 4 + end + 1]  # up through the newline before the closing ---
-            tail = text[4 + end + 1 :]   # the closing --- line and everything after
-            return head + metric_lines + tail
-    # No frontmatter found — prepend a minimal one.
-    return f"---\n{metric_lines}---\n\n{output}"
+    from .metrics import render_with_frontmatter, split_frontmatter
+
+    fields, body = split_frontmatter(output)
+    fields["model"] = model
+    fields["original_words"] = orig_words
+    fields["summary_words"] = summary_metrics["words"]
+    fields["compression_ratio"] = ratio
+    return render_with_frontmatter(fields, body)
 
 
 def _read_pending_context() -> str:
@@ -543,7 +537,8 @@ def summarize_one(
     # frontmatter + body, which is fine for ratio purposes.
     summary_metrics = measure_text(output)
     ratio = compression_ratio(summary_metrics["chars"], orig_chars)
-    output = _inject_metrics(output, orig_words, summary_metrics, ratio)
+    used_model = model or "sonnet"
+    output = _inject_metrics(output, orig_words, summary_metrics, ratio, used_model)
     # Atomic write: never leave a half-finished summary on disk if something
     # crashes between bytes. Write to a sibling .tmp and rename on success.
     tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
@@ -556,6 +551,7 @@ def summarize_one(
     conv_meta["summary_words"] = summary_metrics["words"]
     conv_meta["summary_tokens_est"] = summary_metrics["tokens_est"]
     conv_meta["compression_ratio"] = ratio
+    conv_meta["model"] = used_model
     conv_meta["summarized_at"] = now_iso()
 
     # Pull significance from the frontmatter Claude just wrote and store it
