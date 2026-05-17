@@ -389,6 +389,20 @@ def run(args: Any) -> None:
     # canonical label, not what the user typed.
     tier, range_start, range_end = parse_period(args.period)
 
+    # A hand-edited child summary/entry leaves stale word/char/ratio numbers
+    # in state + frontmatter, and this rollup sums them. Recompute from
+    # current file content first (pure arithmetic, no Claude call) so the
+    # totals this entry records are honest. Idempotent — a no-op if nothing
+    # was edited.
+    from .recompute_metrics import run_recompute
+    rc = run_recompute(state)
+    if any(rc.values()):
+        state_mod.save(state)
+        print(
+            f"Recomputed drifted metrics before rollup: "
+            f"{rc['summary_files']} summary + {rc['entry_files']} entry file(s)."
+        )
+
     skip_prompts = getattr(args, "yes", False)
 
     # The period is partial if today falls before its end date — more

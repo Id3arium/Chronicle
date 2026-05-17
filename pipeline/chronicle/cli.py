@@ -146,6 +146,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_stale.set_defaults(func=lambda a: __import__("chronicle.stale", fromlist=["run"]).run(a))
 
+    p_rcm = sub.add_parser(
+        "recompute-metrics", aliases=["rcm"],
+        help="Recompute word/char/ratio metrics from current file content "
+        "(after hand-editing a summary/entry). No Claude call. Idempotent. "
+        "synthesize runs this for its children automatically.",
+    )
+    p_rcm.set_defaults(func=lambda a: __import__("chronicle.recompute_metrics", fromlist=["run"]).run(a))
+
     p_install = sub.add_parser("install-agent", help="Install launchd agent that auto-ingests new files in data/inbox/.")
     p_install.set_defaults(func=_install_agent_cmd)
     p_uninstall = sub.add_parser("uninstall-agent", help="Remove the launchd agent.")

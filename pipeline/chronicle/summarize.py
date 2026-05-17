@@ -532,10 +532,12 @@ def summarize_one(
         out_path.parent.mkdir(parents=True, exist_ok=True)
     else:
         out_path = out_dir / f"{stem_for(uuid, conv_meta.get('title'), conv_meta.get('created_at'))}.md"
-    # Inject length metrics into the frontmatter. The summary's own prose is
-    # the apples-to-apples count; we measure the whole stdout so it covers
-    # frontmatter + body, which is fine for ratio purposes.
-    summary_metrics = measure_text(output)
+    # Measure the BODY only (prose, frontmatter excluded). The frontmatter
+    # holds the metrics themselves, so counting it would make the numbers
+    # self-referential — and it keeps `recompute-metrics` byte-stable, since
+    # it can re-derive the exact same value from any later file state.
+    from .metrics import split_frontmatter
+    summary_metrics = measure_text(split_frontmatter(output)[1])
     ratio = compression_ratio(summary_metrics["chars"], orig_chars)
     used_model = model or "claude-sonnet-4-6"
     output = _inject_metrics(output, orig_words, summary_metrics, ratio, used_model)
