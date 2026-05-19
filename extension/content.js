@@ -1,7 +1,7 @@
 // Chronicle Export — content script.
 // Runs on claude.ai. Performs all authenticated fetches using the user's
-// session cookie (credentials: 'include'), writes a structured log to
-// chrome.storage.local as it goes, and triggers the download at the end.
+// session cookie (credentials: 'include'), stores full conversations in
+// IndexedDB, and lets the popup select which ones to download.
 
 // Double-injection guard (pattern from agoramachina/claude-exporter content.js:8-12).
 if (window.__chronicleExportLoaded) {
@@ -15,6 +15,10 @@ if (window.__chronicleExportLoaded) {
   const MAX_RETRIES = BACKOFF_SCHEDULE_MS.length;
   const LOG_CAP = 500;
 
+  const DB_NAME = 'ChronicleExport';
+  const DB_VERSION = 1;
+  const STORE_NAME = 'conversations';
+
   // Filename-safe character regex (from fork content.js:345).
   const INVALID_FILENAME_CHARS = /[<>:"/\\|?*\x00-\x1f]/g;
 
@@ -24,6 +28,63 @@ if (window.__chronicleExportLoaded) {
 
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  // ──────────────────────────── IndexedDB helpers ────────────────────────────
+
+  function openDB() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, DB_VERSION);
+      req.onupgradeneeded = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+          db.createObjectStore(STORE_NAME, { keyPath: 'uuid' });
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function idbPut(record) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      tx.objectStore(STORE_NAME).put(record);
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = () => { db.close(); reject(tx.error); };
+    });
+  }
+
+  async function idbGetAll(uuids) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const store = tx.objectStore(STORE_NAME);
+      const results = [];
+      let remaining = uuids.length;
+      if (remaining === 0) { db.close(); resolve([]); return; }
+      for (const uuid of uuids) {
+        const req = store.get(uuid);
+        req.onsuccess = () => {
+          if (req.result) results.push(req.result);
+          if (--remaining === 0) { db.close(); resolve(results); }
+        };
+        req.onerror = () => {
+          if (--remaining === 0) { db.close(); resolve(results); }
+        };
+      }
+    });
+  }
+
+  async function idbClear() {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      tx.objectStore(STORE_NAME).clear();
+      tx.oncomplete = () => { db.close(); resolve(); };
+      tx.onerror = () => { db.close(); reject(tx.error); };
+    });
   }
 
   // ──────────────────────────── logging ────────────────────────────
@@ -41,7 +102,6 @@ if (window.__chronicleExportLoaded) {
   async function appendLog(entry) {
     const { runLog = [] } = await readState();
     const next = runLog.concat([{ ts: new Date().toISOString(), ...entry }]);
-    // FIFO-cap.
     const capped = next.length > LOG_CAP ? next.slice(next.length - LOG_CAP) : next;
     await writeState({ runLog: capped });
     const method = entry.level === 'error' ? 'error' : entry.level === 'warn' ? 'warn' : 'log';
@@ -63,7 +123,6 @@ if (window.__chronicleExportLoaded) {
         const res = await fetch(url, { credentials: 'include', headers: { Accept: 'application/json' } });
         if (res.ok) return await res.json();
 
-        // Retry on 429 and 5xx; fail fast on other 4xx.
         const retriable = res.status === 429 || (res.status >= 500 && res.status < 600);
         const bodyText = await res.text().catch(() => '');
         const snippet = bodyText.slice(0, 200);
@@ -78,7 +137,7 @@ if (window.__chronicleExportLoaded) {
         await sleep(wait);
       } catch (err) {
         lastErr = err;
-        if (err.status !== undefined) throw err; // already handled above
+        if (err.status !== undefined) throw err;
         if (attempt === MAX_RETRIES) break;
         const wait = BACKOFF_SCHEDULE_MS[attempt];
         await appendLog({ level: 'warn', msg: `${label}: ${err.message}`, retry: `${attempt + 1}/${MAX_RETRIES}` });
@@ -91,7 +150,6 @@ if (window.__chronicleExportLoaded) {
   // ──────────────────────────── API calls ────────────────────────────
 
   async function getOrgId() {
-    // Pattern cherry-picked from fork popup.js:11-35 / content.js:124-150.
     const orgs = await fetchJsonWithBackoff('https://claude.ai/api/organizations', 'list organizations');
     if (!Array.isArray(orgs) || orgs.length === 0) throw new Error('No organizations returned by claude.ai. Make sure you are logged in.');
     const chatOrg = orgs.find((o) => Array.isArray(o.capabilities) && o.capabilities.includes('chat'));
@@ -105,17 +163,12 @@ if (window.__chronicleExportLoaded) {
   }
 
   async function listAllConversations(orgId) {
-    // Single endpoint returns every conversation across general chat + all projects.
-    // Each conversation's project_uuid field tells us which project it belongs to
-    // (or null for general chat). Pattern from fork content.js:102.
     const url = `https://claude.ai/api/organizations/${orgId}/chat_conversations`;
     const convs = await fetchJsonWithBackoff(url, 'list conversations');
     return Array.isArray(convs) ? convs : [];
   }
 
   async function fetchFullConversation(orgId, conversationUuid) {
-    // render_all_tools=true ensures tool_use blocks are populated
-    // (from fork content.js:84).
     const url = `https://claude.ai/api/organizations/${orgId}/chat_conversations/${conversationUuid}?tree=True&rendering_mode=messages&render_all_tools=true`;
     return await fetchJsonWithBackoff(url, `fetch conversation ${conversationUuid}`);
   }
@@ -134,7 +187,6 @@ if (window.__chronicleExportLoaded) {
           } else if (c && c.type === 'thinking' && typeof c.thinking === 'string') {
             content.push({ type: 'thinking', text: c.thinking });
           } else if (c && c.type === 'tool_use') {
-            // Carry display_content through; artifact extraction happens downstream.
             const block = { type: 'tool_use', tool_name: c.name || c.tool_name || null };
             if (c.input !== undefined) block.input = c.input;
             if (c.display_content) {
@@ -194,20 +246,39 @@ if (window.__chronicleExportLoaded) {
     };
   }
 
-  // ──────────────────────────── main run ────────────────────────────
+  function countWords(record) {
+    let total = 0;
+    for (const msg of (record.messages || [])) {
+      for (const block of (msg.content || [])) {
+        if (block.text) {
+          total += block.text.split(/\s+/).filter(Boolean).length;
+        }
+        if (block.content) {
+          total += block.content.split(/\s+/).filter(Boolean).length;
+        }
+      }
+    }
+    return total;
+  }
+
+  // ──────────────────────────── date helpers ────────────────────────────
 
   function dateInRange(iso, startDate, endDate) {
     if (!iso) return false;
-    // startDate/endDate are YYYY-MM-DD strings in local time; compare as UTC day boundaries.
     const t = new Date(iso).getTime();
     const start = new Date(`${startDate}T00:00:00Z`).getTime();
     const end = new Date(`${endDate}T23:59:59.999Z`).getTime();
     return t >= start && t <= end;
   }
 
-  function exportFilename(startDate, endDate) {
-    const ts = new Date().toISOString().slice(11, 19).replace(/:/g, '');
-    return `chronicle-export-${startDate}-to-${endDate}-${ts}.json`;
+  function exportFilename(fetchAll, startDate, endDate) {
+    const now = new Date();
+    const ts = now.toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-');
+    if (fetchAll) {
+      return `chronicle-export-all-${ts}.json`;
+    }
+    const timeOnly = now.toISOString().slice(11, 19).replace(/:/g, '');
+    return `chronicle-export-${startDate}-to-${endDate}-${timeOnly}.json`;
   }
 
   function triggerDownload(jsonString, filename) {
@@ -220,7 +291,6 @@ if (window.__chronicleExportLoaded) {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    // Revoke after a tick so the download has time to start.
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
@@ -235,9 +305,246 @@ if (window.__chronicleExportLoaded) {
     await new Promise((resolve) => chrome.storage.local.remove(['cancelRequested'], resolve));
   }
 
-  // Unified export. Incremental-by-default: only fetches conversations whose
-  // updated_at moved since last scrape. The `fetchAll` flag skips the date
-  // filter; `onlyUuids` (retry case) narrows to a specific UUID whitelist.
+  // ──────────────────────────── phase 1: fetch conversations ────────────────────────────
+
+  async function runFetch({ fetchAll, startDate, endDate }) {
+    const startedAt = new Date().toISOString();
+    await clearCancelFlag();
+    await idbClear();
+    await writeState({
+      currentRun: { startedAt, phase: 'fetch', total: 0, completed: 0, fetchAll: !!fetchAll },
+      runLog: [],
+      fetchedMetas: []
+    });
+    const rangeLabel = fetchAll ? 'all conversations' : `${startDate} → ${endDate}`;
+    await appendLog({ level: 'ok', msg: `Fetch started (${rangeLabel})` });
+
+    try {
+      const orgId = await getOrgId();
+      await appendLog({ level: 'ok', msg: `Using organization ${orgId}` });
+
+      const projects = await listProjects(orgId);
+      const projectMap = new Map(projects.map((p) => [p.uuid, p]));
+      await appendLog({ level: 'ok', msg: `Found ${projects.length} projects` });
+
+      const allConvs = await listAllConversations(orgId);
+      await appendLog({ level: 'ok', msg: `Found ${allConvs.length} conversations across all contexts` });
+
+      const { seenConversations = {} } = await new Promise((resolve) =>
+        chrome.storage.local.get(['seenConversations'], resolve)
+      );
+
+      // Detect deletions
+      const currentUuidSet = new Set(allConvs.map((c) => c.uuid));
+      const deletedUuids = Object.keys(seenConversations).filter((u) => !currentUuidSet.has(u));
+
+      // Filter to candidates
+      const toFetch = [];
+      let skippedUnchanged = 0;
+      for (const c of allConvs) {
+        if (!fetchAll) {
+          const field = c.updated_at;
+          if (!dateInRange(field, startDate, endDate)) continue;
+        }
+        const prev = seenConversations[c.uuid];
+        if (prev && c.updated_at && c.updated_at <= prev) {
+          skippedUnchanged++;
+          continue;
+        }
+        const project = c.project_uuid ? projectMap.get(c.project_uuid) || { uuid: c.project_uuid, name: '(unknown project)' } : null;
+        toFetch.push({ project, stub: c });
+      }
+
+      if (skippedUnchanged > 0) {
+        await appendLog({ level: 'ok', msg: `Skipping ${skippedUnchanged} unchanged conversations` });
+      }
+      if (deletedUuids.length > 0) {
+        await appendLog({ level: 'warn', msg: `${deletedUuids.length} previously-seen conversations no longer exist` });
+      }
+
+      await updateCurrentRun({ total: toFetch.length });
+      await appendLog({ level: 'ok', msg: `${toFetch.length} conversations to fetch` });
+
+      const metas = [];
+      let completed = 0;
+      let succeeded = 0;
+      let failed = 0;
+      let cancelled = false;
+
+      for (const { project, stub } of toFetch) {
+        if (await isCancelled()) { cancelled = true; break; }
+        try {
+          const full = await fetchFullConversation(orgId, stub.uuid);
+          const record = buildConversationRecord(full, project);
+          const words = countWords(record);
+
+          // Store full conversation in IndexedDB
+          await idbPut(record);
+
+          // Build meta for popup list
+          const meta = {
+            uuid: record.uuid,
+            title: record.title || '(untitled)',
+            date: (record.updated_at || '').slice(0, 10),
+            words,
+            changed: !!seenConversations[record.uuid]
+          };
+          metas.push(meta);
+
+          // Push metas to storage so popup can render live
+          await writeState({ fetchedMetas: [...metas] });
+
+          succeeded++;
+          await appendLog({
+            level: 'ok',
+            uuid: stub.uuid,
+            project: project ? project.name : 'general',
+            msg: stub.name || '(untitled)'
+          });
+        } catch (err) {
+          failed++;
+          await appendLog({
+            level: 'error',
+            uuid: stub.uuid,
+            project: project ? project.name : 'general',
+            msg: `${stub.name || '(untitled)'}: ${err.message}`,
+            status: err.status || null,
+            bodySnippet: err.bodySnippet || null
+          });
+        }
+        completed++;
+        await updateCurrentRun({ completed });
+        await sleep(FETCH_DELAY_MS);
+      }
+
+      if (cancelled) await appendLog({ level: 'warn', msg: `Cancelled after ${completed}/${toFetch.length}` });
+
+      // Store deletedUuids so download phase can include them in metadata
+      const finishedAt = new Date().toISOString();
+      const durationMs = new Date(finishedAt).getTime() - new Date(startedAt).getTime();
+      await writeState({
+        currentRun: null,
+        lastRun: {
+          startedAt,
+          finishedAt,
+          durationMs,
+          total: toFetch.length,
+          succeeded,
+          failed,
+          skippedUnchanged,
+          fetchDone: true,
+          cancelled,
+          deletedUuids,
+          fetchAll: !!fetchAll,
+          startDate,
+          endDate
+        }
+      });
+      await clearCancelFlag();
+      const summary = `Fetch complete: ${succeeded} ok, ${failed} failed`;
+      await appendLog({ level: cancelled ? 'warn' : 'ok', msg: cancelled ? `${summary} (cancelled)` : summary });
+
+    } catch (err) {
+      const finishedAt = new Date().toISOString();
+      await appendLog({ level: 'error', msg: `Fetch aborted: ${err.message}`, status: err.status || null, bodySnippet: err.bodySnippet || null });
+      await writeState({
+        currentRun: null,
+        lastRun: {
+          startedAt,
+          finishedAt,
+          durationMs: new Date(finishedAt).getTime() - new Date(startedAt).getTime(),
+          total: 0, succeeded: 0, failed: 0, aborted: true, error: err.message
+        }
+      });
+      await clearCancelFlag();
+    }
+  }
+
+  // ──────────────────────────── phase 2: download selected ────────────────────────────
+
+  async function runDownload({ uuids, fetchAll, startDate, endDate }) {
+    const startedAt = new Date().toISOString();
+    await writeState({
+      currentRun: { startedAt, phase: 'download' }
+    });
+    await appendLog({ level: 'ok', msg: `Building download for ${uuids.length} conversations…` });
+
+    try {
+      // Read selected conversations from IndexedDB
+      const records = await idbGetAll(uuids);
+
+      if (records.length === 0) {
+        await appendLog({ level: 'error', msg: 'No conversation data found. Try fetching again.' });
+        await writeState({ currentRun: null });
+        return;
+      }
+
+      // Get last run info for deletedUuids
+      const { lastRun } = await new Promise((resolve) =>
+        chrome.storage.local.get(['lastRun'], resolve)
+      );
+      const deletedUuids = (lastRun && lastRun.deletedUuids) || [];
+
+      const outputFile = exportFilename(fetchAll, startDate, endDate);
+
+      const exportObj = {
+        export_metadata: {
+          exported_at: new Date().toISOString(),
+          range_start: fetchAll ? null : `${startDate}T00:00:00Z`,
+          range_end: fetchAll ? null : `${endDate}T23:59:59Z`,
+          range_field: 'updated_at',
+          fetch_all: !!fetchAll,
+          total_conversations: records.length,
+          skipped_unchanged: (lastRun && lastRun.skippedUnchanged) || 0,
+          deleted_uuids: deletedUuids,
+          cancelled: false,
+          extension_version: EXTENSION_VERSION
+        },
+        conversations: records
+      };
+
+      triggerDownload(JSON.stringify(exportObj, null, 2), outputFile);
+
+      // Update seenConversations
+      const { seenConversations = {} } = await new Promise((resolve) =>
+        chrome.storage.local.get(['seenConversations'], resolve)
+      );
+      const mergedSeen = { ...seenConversations };
+      for (const r of records) {
+        mergedSeen[r.uuid] = r.updated_at || null;
+      }
+      for (const u of deletedUuids) delete mergedSeen[u];
+      await writeState({ seenConversations: mergedSeen });
+
+      const finishedAt = new Date().toISOString();
+      const durationMs = new Date(finishedAt).getTime() - new Date(startedAt).getTime();
+      await writeState({
+        currentRun: null,
+        lastRun: {
+          startedAt,
+          finishedAt,
+          durationMs,
+          total: records.length,
+          succeeded: records.length,
+          failed: 0,
+          outputFile,
+          downloaded: true
+        }
+      });
+      await appendLog({ level: 'ok', msg: `Downloaded ${records.length} conversations → ${outputFile}` });
+
+      // Clean up IndexedDB after successful download
+      await idbClear();
+      await new Promise((resolve) => chrome.storage.local.remove(['fetchedMetas'], resolve));
+
+    } catch (err) {
+      await appendLog({ level: 'error', msg: `Download failed: ${err.message}` });
+      await writeState({ currentRun: null });
+    }
+  }
+
+  // ──────────────────────────── legacy export (kept for backward compat) ────────────────────────────
+
   async function runExport({ fetchAll, startDate, endDate, rangeField, onlyUuids }) {
     const startedAt = new Date().toISOString();
     await clearCancelFlag();
@@ -271,13 +578,9 @@ if (window.__chronicleExportLoaded) {
         chrome.storage.local.get(['seenConversations'], resolve)
       );
 
-      // Detect deletions: UUIDs we've seen before that no longer appear.
       const currentUuidSet = new Set(allConvs.map((c) => c.uuid));
       const deletedUuids = Object.keys(seenConversations).filter((u) => !currentUuidSet.has(u));
 
-      // Determine candidates by range + fetchAll. Then filter to only those
-      // whose updated_at is newer than what we already scraped (the
-      // incremental core). `onlyUuids` (retry) overrides both filters.
       const toFetch = [];
       let skippedUnchanged = 0;
       for (const c of allConvs) {
@@ -346,16 +649,7 @@ if (window.__chronicleExportLoaded) {
 
       if (cancelled) await appendLog({ level: 'warn', msg: `Cancelled after ${completed}/${toFetch.length}` });
 
-      // Build filename. "all" / "since-{YYYY-MM-DD}" for incremental-ish runs,
-      // date range for explicit ranges.
-      let outputFile;
-      if (fetchAll) {
-        const now = new Date();
-        const ts = now.toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-');
-        outputFile = `chronicle-export-all-${ts}.json`;
-      } else {
-        outputFile = exportFilename(startDate, endDate);
-      }
+      const outputFile = exportFilename(fetchAll, startDate, endDate);
 
       const exportObj = {
         export_metadata: {
@@ -373,15 +667,11 @@ if (window.__chronicleExportLoaded) {
         conversations: records
       };
 
-      // Only download if we actually fetched something or there are deletions
-      // to record. Pure "nothing changed" runs produce no file.
       const noChanges = records.length === 0 && deletedUuids.length === 0 && !cancelled;
       if (!noChanges) {
         triggerDownload(JSON.stringify(exportObj, null, 2), outputFile);
       }
 
-      // Merge freshly-seen updated_at timestamps; drop deleted UUIDs from
-      // the seen map so they don't re-trigger deletion detection next run.
       const mergedSeen = { ...seenConversations, ...seenUpdates };
       for (const u of deletedUuids) delete mergedSeen[u];
       await writeState({ seenConversations: mergedSeen });
@@ -431,9 +721,27 @@ if (window.__chronicleExportLoaded) {
   // ──────────────────────────── message dispatch ────────────────────────────
 
   chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === 'fetchConversations') {
+      runFetch({
+        fetchAll: !!request.fetchAll,
+        startDate: request.startDate,
+        endDate: request.endDate
+      }).catch((err) => console.error('[Chronicle] unhandled error', err));
+      sendResponse({ accepted: true });
+      return true;
+    }
+    if (request.action === 'downloadSelected') {
+      runDownload({
+        uuids: request.uuids,
+        fetchAll: !!request.fetchAll,
+        startDate: request.startDate,
+        endDate: request.endDate
+      }).catch((err) => console.error('[Chronicle] unhandled error', err));
+      sendResponse({ accepted: true });
+      return true;
+    }
+    // Legacy: direct export (for backward compat or programmatic use)
     if (request.action === 'exportRange') {
-      // Fire-and-forget; popup watches chrome.storage for updates.
-      // Accept both `onlyUuids` (new) and `retryUuids` (legacy) for compatibility.
       const onlyUuids = Array.isArray(request.onlyUuids)
         ? request.onlyUuids
         : Array.isArray(request.retryUuids) ? request.retryUuids : null;

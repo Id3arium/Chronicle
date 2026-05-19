@@ -1,74 +1,74 @@
 // Chronicle Export — popup script.
-// Strictly DOM work + message passing. Never uses innerHTML with variables.
-// Reads persisted state from chrome.storage.local so progress survives the
-// popup closing mid-run.
+// Two-phase flow: Fetch (populates list from IndexedDB) → Download (selected only).
+// Never uses innerHTML with variables. Reads chrome.storage.local for progress.
 
 const els = {
   version: document.getElementById('version'),
-  startDate: document.getElementById('startDate'),
-  endDate: document.getElementById('endDate'),
-  rangeField: document.getElementById('rangeField'),
+  lastDownload: document.getElementById('lastDownload'),
   fetchAll: document.getElementById('fetchAll'),
   dateRow: document.getElementById('dateRow'),
-  exportBtn: document.getElementById('exportBtn'),
-  retryBtn: document.getElementById('retryBtn'),
+  startDate: document.getElementById('startDate'),
+  endDate: document.getElementById('endDate'),
+  setupPanel: document.getElementById('setupPanel'),
+  fetchBtn: document.getElementById('fetchBtn'),
   cancelBtn: document.getElementById('cancelBtn'),
   elapsed: document.getElementById('elapsed'),
   status: document.getElementById('status'),
   progressBar: document.getElementById('progressBar'),
+  listPanel: document.getElementById('listPanel'),
+  convList: document.getElementById('convList'),
+  selectAllBtn: document.getElementById('selectAllBtn'),
+  deselectAllBtn: document.getElementById('deselectAllBtn'),
+  selectionCount: document.getElementById('selectionCount'),
+  footer: document.getElementById('footer'),
+  downloadBtn: document.getElementById('downloadBtn'),
+  newExportBtn: document.getElementById('newExportBtn'),
   log: document.getElementById('log')
 };
 
 let elapsedTimer = null;
 
-// ──────────────────────────── state helpers ────────────────────────────
+// Track conversation metadata in popup memory (lightweight — uuid, title,
+// date, words). Full conversation data lives in IndexedDB only.
+let convMetas = [];       // { uuid, title, date, words, changed, checked }
+let fetchComplete = false;
+
+// ──────────────────────────── helpers ────────────────────────────
 
 function readState() {
-  return new Promise((resolve) => chrome.storage.local.get(['currentRun', 'lastRun', 'runLog'], (r) => resolve(r)));
+  return new Promise((resolve) =>
+    chrome.storage.local.get(['currentRun', 'lastRun', 'runLog', 'fetchedMetas', 'lastDownloadMsg'], (r) => resolve(r))
+  );
 }
 
-function todayIso() {
-  const d = new Date();
-  return d.toISOString().slice(0, 10);
-}
-
-function monthAgoIso() {
-  const d = new Date();
-  d.setDate(d.getDate() - 30);
-  return d.toISOString().slice(0, 10);
-}
+function todayIso() { return new Date().toISOString().slice(0, 10); }
+function monthAgoIso() { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10); }
 
 function setProgress(completed, total) {
   const pct = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
   els.progressBar.style.width = `${pct}%`;
 }
 
-function setStatusText(text) {
-  els.status.textContent = text;
-}
+function setStatusText(text) { els.status.textContent = text; }
 
 function formatElapsed(ms) {
   const s = Math.floor(ms / 1000);
   const m = Math.floor(s / 60);
-  const rem = s % 60;
-  return m > 0 ? `${m}m ${rem}s` : `${s}s`;
+  return m > 0 ? `${m}m ${s % 60}s` : `${s}s`;
 }
 
 function startElapsedTicker(startedAt) {
   stopElapsedTicker();
-  const tick = () => {
-    const ms = Date.now() - new Date(startedAt).getTime();
-    els.elapsed.textContent = `Elapsed ${formatElapsed(ms)}`;
-  };
+  const tick = () => { els.elapsed.textContent = `Elapsed ${formatElapsed(Date.now() - new Date(startedAt).getTime())}`; };
   tick();
   elapsedTimer = setInterval(tick, 1000);
 }
+function stopElapsedTicker() { if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; } }
 
-function stopElapsedTicker() {
-  if (elapsedTimer) {
-    clearInterval(elapsedTimer);
-    elapsedTimer = null;
-  }
+function formatWords(n) {
+  if (n == null) return '—';
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k words`;
+  return `${n} words`;
 }
 
 function applyFetchAllState() {
@@ -81,13 +81,10 @@ function applyFetchAllState() {
 
 // ──────────────────────────── log rendering ────────────────────────────
 
-function clearLog() {
-  while (els.log.firstChild) els.log.removeChild(els.log.firstChild);
-}
+function clearLog() { while (els.log.firstChild) els.log.removeChild(els.log.firstChild); }
 
 function renderLog(entries) {
   clearLog();
-  // Show most recent last (natural append order).
   for (const e of entries.slice(-50)) {
     const row = document.createElement('div');
     row.className = `log-entry ${e.level || 'ok'}`;
@@ -108,7 +105,6 @@ function renderLog(entries) {
     body.textContent = parts.join(' · ');
     row.appendChild(body);
 
-    // Optional details row for the diagnostic body snippet.
     if (e.bodySnippet) {
       const wrap = document.createElement('details');
       const sum = document.createElement('summary');
@@ -120,44 +116,145 @@ function renderLog(entries) {
       wrap.appendChild(pre);
       row.appendChild(wrap);
     }
-
     els.log.appendChild(row);
   }
-  // Auto-scroll to bottom.
   els.log.scrollTop = els.log.scrollHeight;
 }
 
-// ──────────────────────────── rendering by state ────────────────────────────
+// ──────────────────────────── conversation list ────────────────────────────
+
+function updateSelectionCount() {
+  const checked = convMetas.filter((m) => m.checked).length;
+  els.selectionCount.textContent = `${checked}/${convMetas.length} selected`;
+  els.downloadBtn.textContent = checked > 0 ? `Download ${checked} conversation${checked !== 1 ? 's' : ''}` : 'Download selected';
+  els.downloadBtn.disabled = checked === 0;
+}
+
+function renderConvRow(meta) {
+  const row = document.createElement('div');
+  row.className = 'conv-row';
+  row.dataset.uuid = meta.uuid;
+
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.checked = meta.checked;
+  cb.addEventListener('change', () => {
+    meta.checked = cb.checked;
+    updateSelectionCount();
+  });
+  row.appendChild(cb);
+
+  const date = document.createElement('span');
+  date.className = 'conv-date';
+  date.textContent = meta.date || '—';
+  row.appendChild(date);
+
+  const words = document.createElement('span');
+  words.className = 'conv-words';
+  words.textContent = formatWords(meta.words);
+  row.appendChild(words);
+
+  const title = document.createElement('span');
+  title.className = 'conv-title';
+  title.textContent = meta.title || '(untitled)';
+  title.title = meta.title || '(untitled)';  // full title on hover
+  row.appendChild(title);
+
+  // Click row to toggle checkbox
+  row.addEventListener('click', (e) => {
+    if (e.target === cb) return;
+    cb.checked = !cb.checked;
+    meta.checked = cb.checked;
+    updateSelectionCount();
+  });
+
+  return row;
+}
+
+function renderConvList() {
+  // Clear and re-render from convMetas
+  while (els.convList.firstChild) els.convList.removeChild(els.convList.firstChild);
+  for (const meta of convMetas) {
+    els.convList.appendChild(renderConvRow(meta));
+  }
+  updateSelectionCount();
+}
+
+function addOrUpdateConvRow(meta) {
+  // Check if row exists already (update case)
+  const existing = els.convList.querySelector(`[data-uuid="${meta.uuid}"]`);
+  if (existing) {
+    existing.replaceWith(renderConvRow(meta));
+  } else {
+    els.convList.appendChild(renderConvRow(meta));
+  }
+  updateSelectionCount();
+}
+
+// ──────────────────────────── state-driven rendering ────────────────────────────
 
 function renderFromState(state) {
-  const { currentRun, lastRun, runLog = [] } = state;
+  const { currentRun, lastRun, runLog = [], fetchedMetas, lastDownloadMsg } = state;
   renderLog(runLog);
 
+  // Show persisted last download message on setup view
+  if (lastDownloadMsg && !currentRun) {
+    els.lastDownload.textContent = lastDownloadMsg;
+    els.lastDownload.classList.remove('hidden');
+  }
+
   if (currentRun) {
-    els.exportBtn.disabled = true;
-    els.retryBtn.classList.add('hidden');
-    els.cancelBtn.classList.remove('hidden');
-    if (currentRun.startedAt) startElapsedTicker(currentRun.startedAt);
-    const { completed = 0, total = 0 } = currentRun;
-    setStatusText(total > 0 ? `Fetching ${completed}/${total}…` : 'Starting export…');
-    setProgress(completed, total);
+    const phase = currentRun.phase || 'fetch';
+
+    if (phase === 'fetch') {
+      els.fetchBtn.disabled = true;
+      els.cancelBtn.classList.remove('hidden');
+      els.listPanel.classList.add('active');
+      if (currentRun.startedAt) startElapsedTicker(currentRun.startedAt);
+      const { completed = 0, total = 0 } = currentRun;
+      setStatusText(total > 0 ? `Fetching ${completed}/${total}…` : 'Listing conversations…');
+      setProgress(completed, total);
+
+      // Restore list from fetchedMetas if popup was reopened mid-fetch
+      if (fetchedMetas && fetchedMetas.length > 0 && convMetas.length === 0) {
+        convMetas = fetchedMetas.map((m) => ({ ...m, checked: m.checked !== false }));
+        renderConvList();
+      }
+    }
     return;
   }
 
   stopElapsedTicker();
   els.cancelBtn.classList.add('hidden');
-  els.exportBtn.disabled = false;
+  els.fetchBtn.disabled = false;
   setProgress(0, 0);
+
+  // If we have fetched metas and fetch is done, show the list
+  if (fetchedMetas && fetchedMetas.length > 0) {
+    if (convMetas.length === 0) {
+      convMetas = fetchedMetas.map((m) => ({ ...m, checked: m.checked !== false }));
+      renderConvList();
+    }
+    fetchComplete = true;
+    els.listPanel.classList.add('active');
+    els.footer.classList.add('active');
+    els.setupPanel.style.display = 'none';
+  }
 
   if (lastRun) {
     if (lastRun.aborted) {
-      setStatusText(`Last run aborted: ${lastRun.error || 'unknown error'}`);
+      setStatusText(`Aborted: ${lastRun.error || 'unknown error'}`);
+    } else if (lastRun.downloaded) {
+      setStatusText(`Downloaded → ${lastRun.outputFile}`);
     } else if (lastRun.noChanges) {
-      setStatusText('Nothing new since last run.');
-    } else {
-      const parts = [`Last run: ${lastRun.succeeded} ok`];
+      setStatusText('Nothing new since last export.');
+    } else if (lastRun.fetchDone) {
+      const parts = [`Fetched ${lastRun.succeeded} ok`];
       if (lastRun.failed > 0) parts.push(`${lastRun.failed} failed`);
-      if (lastRun.deletedCount) parts.push(`${lastRun.deletedCount} deleted`);
+      setStatusText(parts.join(' · ') + ' — select and download below.');
+    } else {
+      const parts = [`Last run: ${lastRun.succeeded || 0} ok`];
+      if (lastRun.failed > 0) parts.push(`${lastRun.failed} failed`);
       if (lastRun.outputFile) parts.push(`→ ${lastRun.outputFile}`);
       setStatusText(parts.join(' · '));
     }
@@ -165,11 +262,6 @@ function renderFromState(state) {
       els.elapsed.textContent = `Took ${formatElapsed(lastRun.durationMs)}`;
     } else {
       els.elapsed.textContent = '';
-    }
-    if (lastRun.failed && lastRun.failed > 0) {
-      els.retryBtn.classList.remove('hidden');
-    } else {
-      els.retryBtn.classList.add('hidden');
     }
   } else {
     setStatusText('Ready.');
@@ -198,15 +290,14 @@ function sendToContent(tabId, message) {
   });
 }
 
-async function startExport(onlyUuids) {
+async function startFetch() {
   const fetchAll = els.fetchAll.checked;
-  const rangeField = els.rangeField.value;
   const startDate = fetchAll ? null : els.startDate.value;
   const endDate = fetchAll ? null : els.endDate.value;
 
-  if (!fetchAll && !onlyUuids) {
+  if (!fetchAll) {
     if (!startDate || !endDate) {
-      setStatusText('Pick both a start and an end date, or check "Fetch all".');
+      setStatusText('Pick both a start and an end date, or check "Export all".');
       return;
     }
     if (startDate > endDate) {
@@ -215,24 +306,57 @@ async function startExport(onlyUuids) {
     }
   }
 
-  els.exportBtn.disabled = true;
-  els.retryBtn.classList.add('hidden');
+  // Reset state
+  convMetas = [];
+  fetchComplete = false;
+  while (els.convList.firstChild) els.convList.removeChild(els.convList.firstChild);
+  els.listPanel.classList.add('active');
+  els.footer.classList.remove('active');
+  els.fetchBtn.disabled = true;
+  els.lastDownload.classList.add('hidden');
+  chrome.storage.local.remove(['lastDownloadMsg']);
   setStatusText('Connecting to claude.ai…');
 
   try {
     const tabId = await ensureContentScript();
     await sendToContent(tabId, {
-      action: 'exportRange',
+      action: 'fetchConversations',
       fetchAll,
       startDate,
-      endDate,
-      rangeField,
-      onlyUuids: onlyUuids || null
+      endDate
     });
-    setStatusText('Export started. You can close this popup — it will keep running.');
+    setStatusText('Fetch started…');
   } catch (err) {
-    els.exportBtn.disabled = false;
-    setStatusText(`Could not start export: ${err.message}. Open claude.ai in the active tab and try again.`);
+    els.fetchBtn.disabled = false;
+    setStatusText(`Could not start: ${err.message}. Open claude.ai and try again.`);
+  }
+}
+
+async function startDownload() {
+  const selectedUuids = convMetas.filter((m) => m.checked).map((m) => m.uuid);
+  if (selectedUuids.length === 0) {
+    setStatusText('No conversations selected.');
+    return;
+  }
+
+  els.downloadBtn.disabled = true;
+  setStatusText(`Building download for ${selectedUuids.length} conversations…`);
+
+  try {
+    const tabId = await ensureContentScript();
+    const fetchAll = els.fetchAll.checked;
+    const startDate = fetchAll ? null : els.startDate.value;
+    const endDate = fetchAll ? null : els.endDate.value;
+    await sendToContent(tabId, {
+      action: 'downloadSelected',
+      uuids: selectedUuids,
+      fetchAll,
+      startDate,
+      endDate
+    });
+  } catch (err) {
+    els.downloadBtn.disabled = false;
+    setStatusText(`Download failed: ${err.message}`);
   }
 }
 
@@ -241,30 +365,114 @@ async function cancelRun() {
   setStatusText('Cancelling…');
 }
 
-async function retryFailed() {
-  const { lastRun, runLog = [] } = await readState();
-  if (!lastRun) return;
-  const failed = runLog.filter((e) => e.level === 'error' && e.uuid).map((e) => e.uuid);
-  if (failed.length === 0) {
-    setStatusText('Nothing to retry.');
-    return;
+async function resetToSetup(opts) {
+  const { lastDownloadMsg } = opts || {};
+  convMetas = [];
+  fetchComplete = false;
+  els.listPanel.classList.remove('active');
+  els.footer.classList.remove('active');
+  els.setupPanel.style.display = '';
+  els.fetchBtn.disabled = false;
+  while (els.convList.firstChild) els.convList.removeChild(els.convList.firstChild);
+  clearLog();
+  // Clear stored state so a fresh popup open starts clean
+  await new Promise((resolve) =>
+    chrome.storage.local.remove(['fetchedMetas', 'lastRun', 'runLog', 'currentRun'], resolve)
+  );
+  // Show or persist last download info
+  if (lastDownloadMsg) {
+    els.lastDownload.textContent = lastDownloadMsg;
+    els.lastDownload.classList.remove('hidden');
+    await new Promise((resolve) =>
+      chrome.storage.local.set({ lastDownloadMsg }, resolve)
+    );
   }
-  // Replay the same range the last run used. onlyUuids overrides filters
-  // in content.js, so fetchAll/date values are just for status display.
-  if (lastRun.rangeStart) els.startDate.value = lastRun.rangeStart;
-  if (lastRun.rangeEnd) els.endDate.value = lastRun.rangeEnd;
-  if (lastRun.rangeField) els.rangeField.value = lastRun.rangeField;
-  startExport(failed);
+  setStatusText('Ready.');
+  setProgress(0, 0);
+  els.elapsed.textContent = '';
 }
 
-// ──────────────────────────── init ────────────────────────────
+// ──────────────────────────── storage change listener ────────────────────────────
+
+function onStorageChanged(changes, area) {
+  if (area !== 'local') return;
+
+  // Live-update the list as new metas arrive during fetch
+  if (changes.fetchedMetas) {
+    const metas = changes.fetchedMetas.newValue || [];
+    // Add any new metas we don't have yet
+    for (const m of metas) {
+      const existing = convMetas.find((c) => c.uuid === m.uuid);
+      if (!existing) {
+        const entry = { ...m, checked: true };
+        convMetas.push(entry);
+        addOrUpdateConvRow(entry);
+      }
+    }
+    // Auto-scroll to bottom of list to show new entries
+    els.convList.scrollTop = els.convList.scrollHeight;
+  }
+
+  // Update status/progress from currentRun changes
+  readState().then((state) => {
+    const { currentRun, lastRun, runLog = [] } = state;
+    renderLog(runLog);
+
+    if (currentRun) {
+      const phase = currentRun.phase || 'fetch';
+      els.cancelBtn.classList.remove('hidden');
+      if (currentRun.startedAt) startElapsedTicker(currentRun.startedAt);
+      const { completed = 0, total = 0 } = currentRun;
+
+      if (phase === 'fetch') {
+        els.fetchBtn.disabled = true;
+        setStatusText(total > 0 ? `Fetching ${completed}/${total}…` : 'Listing conversations…');
+        setProgress(completed, total);
+      } else if (phase === 'download') {
+        setStatusText('Building download…');
+      }
+    } else {
+      stopElapsedTicker();
+      els.cancelBtn.classList.add('hidden');
+      els.fetchBtn.disabled = false;
+
+      if (lastRun) {
+        if (lastRun.downloaded) {
+          // Auto-reset to setup, showing what was downloaded
+          const n = lastRun.succeeded || lastRun.total || 0;
+          const msg = `✓ Downloaded ${n} conversation${n !== 1 ? 's' : ''} → ${lastRun.outputFile}`;
+          resetToSetup({ lastDownloadMsg: msg });
+          return;
+        } else if (lastRun.fetchDone) {
+          if (lastRun.cancelled) {
+            // Cancelled fetch — go back to setup
+            resetToSetup();
+            return;
+          }
+          fetchComplete = true;
+          els.footer.classList.add('active');
+          const parts = [`Fetched ${lastRun.succeeded} ok`];
+          if (lastRun.failed > 0) parts.push(`${lastRun.failed} failed`);
+          if (lastRun.skippedUnchanged > 0) parts.push(`${lastRun.skippedUnchanged} unchanged`);
+          setStatusText(parts.join(' · '));
+          setProgress(0, 0);
+          if (lastRun.durationMs) els.elapsed.textContent = `Took ${formatElapsed(lastRun.durationMs)}`;
+        } else if (lastRun.aborted) {
+          resetToSetup();
+          return;
+        }
+      }
+    }
+  });
+}
+
+// ──────────────────────────── prefs ────────────────────────────
 
 function savePrefs() {
   chrome.storage.local.set({
     prefs: {
       startDate: els.startDate.value,
       endDate: els.endDate.value,
-      rangeField: els.rangeField.value,
       fetchAll: els.fetchAll.checked
     }
   });
@@ -274,42 +482,51 @@ function loadPrefs() {
   return new Promise((resolve) => chrome.storage.local.get(['prefs'], (r) => resolve(r.prefs || {})));
 }
 
+// ──────────────────────────── init ────────────────────────────
+
 document.addEventListener('DOMContentLoaded', async () => {
   els.version.textContent = `v${chrome.runtime.getManifest().version}`;
 
   const prefs = await loadPrefs();
   els.startDate.value = prefs.startDate || monthAgoIso();
   els.endDate.value = prefs.endDate || todayIso();
-  if (prefs.rangeField) els.rangeField.value = prefs.rangeField;
-  els.fetchAll.checked = !!prefs.fetchAll;
+  els.fetchAll.checked = prefs.fetchAll !== false;  // default true
   applyFetchAllState();
 
   const state = await readState();
   renderFromState(state);
 
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local') return;
-    readState().then(renderFromState);
-  });
+  chrome.storage.onChanged.addListener(onStorageChanged);
 
-  // Persist on change so selections survive popup close.
+  // Input listeners
   els.startDate.addEventListener('change', savePrefs);
   els.endDate.addEventListener('change', savePrefs);
-  els.rangeField.addEventListener('change', savePrefs);
   els.fetchAll.addEventListener('change', () => { applyFetchAllState(); savePrefs(); });
 
-  // Force native date picker to open on click anywhere in the input
-  // (Firefox's built-in hotspot is narrow; showPicker() makes the whole
-  // input clickable).
   for (const input of [els.startDate, els.endDate]) {
     input.addEventListener('click', () => {
       if (typeof input.showPicker === 'function') {
-        try { input.showPicker(); } catch (_) { /* ignore if not allowed */ }
+        try { input.showPicker(); } catch (_) {}
       }
     });
   }
 
-  els.exportBtn.addEventListener('click', () => startExport(null));
+  // Buttons
+  els.fetchBtn.addEventListener('click', () => startFetch());
   els.cancelBtn.addEventListener('click', () => cancelRun());
-  els.retryBtn.addEventListener('click', () => retryFailed());
+  els.downloadBtn.addEventListener('click', () => startDownload());
+
+  els.selectAllBtn.addEventListener('click', () => {
+    for (const m of convMetas) m.checked = true;
+    els.convList.querySelectorAll('input[type="checkbox"]').forEach((cb) => { cb.checked = true; });
+    updateSelectionCount();
+  });
+
+  els.deselectAllBtn.addEventListener('click', () => {
+    for (const m of convMetas) m.checked = false;
+    els.convList.querySelectorAll('input[type="checkbox"]').forEach((cb) => { cb.checked = false; });
+    updateSelectionCount();
+  });
+
+  els.newExportBtn.addEventListener('click', () => resetToSetup());
 });

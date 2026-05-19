@@ -14,6 +14,9 @@
       --ok: #90ee90;
       --warn: #f0c674;
       --err: #ff9999;
+      --row-hover: rgba(107, 82, 232, 0.08);
+      --badge-bg: rgba(107, 82, 232, 0.2);
+      --badge-fg: #b0a0ff;
     }
     @media (prefers-color-scheme: light) {
       :root {
@@ -26,10 +29,14 @@
         --ok: #1f7a1f;
         --warn: #a86a00;
         --err: #b00020;
+        --row-hover: rgba(84, 54, 218, 0.06);
+        --badge-bg: rgba(84, 54, 218, 0.12);
+        --badge-fg: #5436DA;
       }
     }
+    * { box-sizing: border-box; }
     body {
-      width: 300px;
+      width: 500px;
       margin: 0;
       padding: 0;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -38,7 +45,7 @@
       color: var(--fg);
     }
     header {
-      padding: 10px 12px;
+      padding: 10px 14px;
       background: linear-gradient(135deg, var(--accent), var(--accent-hover));
       color: white;
       display: flex;
@@ -47,20 +54,94 @@
     }
     header .title { font-weight: 600; letter-spacing: 0.2px; }
     header .version { font-size: 11px; opacity: 0.8; }
-    main { padding: 10px 12px; }
-    label { display: block; margin: 6px 0 2px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
-    input[type="date"], select {
+    main { padding: 10px 14px; }
+
+    /* ── Setup panel ── */
+    .last-download {
+      font-size: 11px;
+      color: var(--ok);
+      padding: 5px 8px;
+      margin-bottom: 8px;
+      background: rgba(0, 0, 0, 0.1);
+      border-radius: 4px;
+    }
+    @media (prefers-color-scheme: light) {
+      .last-download { background: rgba(0, 0, 0, 0.03); }
+    }
+    .setup-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .setup-row .toggle-text {
+      font-size: 13px;
+    }
+
+    /* ── Toggle switch ── */
+    .toggle-switch {
+      position: relative;
+      width: 36px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+    .toggle-switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+      position: absolute;
+    }
+    .toggle-track {
+      position: absolute;
+      inset: 0;
+      background: var(--border);
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .toggle-track::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 16px;
+      height: 16px;
+      background: white;
+      border-radius: 50%;
+      transition: transform 0.2s;
+    }
+    .toggle-switch input:checked + .toggle-track {
+      background: var(--accent);
+    }
+    .toggle-switch input:checked + .toggle-track::after {
+      transform: translateX(16px);
+    }
+
+    .date-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .date-row > div { flex: 1; }
+    .date-row label {
+      display: block;
+      margin: 0 0 2px;
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    input[type="date"] {
       width: 100%;
-      padding: 6px 8px;
+      padding: 5px 6px;
       background: var(--bg);
       color: var(--fg);
       border: 1px solid var(--border);
       border-radius: 4px;
-      font-size: 13px;
-      box-sizing: border-box;
+      font-size: 12px;
       cursor: pointer;
     }
-    input[type="date"]:hover, select:hover { border-color: var(--accent); }
+    input[type="date"]:hover { border-color: var(--accent); }
     input[type="date"]::-webkit-calendar-picker-indicator {
       cursor: pointer;
       filter: invert(0.6);
@@ -68,87 +149,48 @@
     @media (prefers-color-scheme: light) {
       input[type="date"]::-webkit-calendar-picker-indicator { filter: none; }
     }
-    .row { display: flex; gap: 8px; }
-    .row > div { flex: 1; }
+    .dates-disabled { opacity: 0.4; pointer-events: none; }
+
     button.primary {
       width: 100%;
-      margin-top: 10px;
       padding: 8px;
       background: var(--accent);
       color: white;
       border: none;
       border-radius: 4px;
       font-size: 13px;
+      font-weight: 500;
       cursor: pointer;
     }
     button.primary:hover { background: var(--accent-hover); }
     button.primary:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; }
-    button.link {
-      background: none;
-      border: none;
-      color: var(--accent);
-      cursor: pointer;
-      font-size: 12px;
-      padding: 0;
-      margin-top: 4px;
-      text-decoration: underline;
-    }
+
+    /* ── Status bar ── */
     #status {
-      margin-top: 10px;
-      padding: 8px;
+      margin-top: 8px;
+      padding: 6px 8px;
       background: rgba(0, 0, 0, 0.15);
       border-radius: 4px;
       min-height: 18px;
+      font-size: 12px;
     }
     @media (prefers-color-scheme: light) {
       #status { background: rgba(0, 0, 0, 0.04); }
     }
     .progress {
-      margin-top: 6px;
+      margin-top: 4px;
       height: 4px;
       background: var(--border);
       border-radius: 2px;
       overflow: hidden;
     }
     .progress > div { height: 100%; background: var(--accent); width: 0%; transition: width 0.2s; }
-    .log {
-      margin-top: 10px;
-      max-height: 180px;
-      overflow-y: auto;
-      border-top: 1px solid var(--border);
-      padding-top: 6px;
-    }
-    .log-entry {
-      font-size: 11px;
-      line-height: 1.4;
-      padding: 2px 0;
-      display: flex;
-      gap: 6px;
-      word-break: break-word;
-    }
-    .log-entry.ok .mark { color: var(--ok); }
-    .log-entry.warn .mark { color: var(--warn); }
-    .log-entry.error .mark { color: var(--err); }
-    .log-entry .mark { flex: 0 0 12px; font-weight: bold; }
-    .log-entry .body { flex: 1; }
-    .log-entry .meta { color: var(--muted); }
-    .hidden { display: none !important; }
-    .checkbox-row {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      margin-top: 8px;
-      font-size: 12px;
-      color: var(--fg);
-      cursor: pointer;
-    }
-    .checkbox-row input { cursor: pointer; }
-    .dates-disabled { opacity: 0.5; pointer-events: none; }
+
     .meta-row {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-top: 6px;
+      margin-top: 4px;
       font-size: 11px;
       color: var(--muted);
       min-height: 18px;
@@ -163,9 +205,127 @@
       cursor: pointer;
     }
     button.cancel:hover { border-color: var(--err); }
-    details { margin-top: 6px; }
+
+    /* ── Log ── */
+    .log {
+      margin-top: 8px;
+      max-height: 120px;
+      overflow-y: auto;
+      border-top: 1px solid var(--border);
+      padding-top: 4px;
+    }
+    .log-entry {
+      font-size: 11px;
+      line-height: 1.4;
+      padding: 1px 0;
+      display: flex;
+      gap: 6px;
+      word-break: break-word;
+    }
+    .log-entry.ok .mark { color: var(--ok); }
+    .log-entry.warn .mark { color: var(--warn); }
+    .log-entry.error .mark { color: var(--err); }
+    .log-entry .mark { flex: 0 0 12px; font-weight: bold; }
+    .log-entry .body { flex: 1; }
+    details { margin-top: 4px; }
     summary { cursor: pointer; color: var(--muted); font-size: 11px; }
     .details-row { font-size: 10px; color: var(--muted); margin-top: 2px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+    /* ── Conversation list ── */
+    #listPanel { display: none; margin-top: 10px; }
+    #listPanel.active { display: block; }
+    .list-toolbar {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    .list-toolbar button {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--fg);
+      border-radius: 3px;
+      padding: 3px 8px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .list-toolbar button:hover { border-color: var(--accent); color: var(--accent); }
+    .list-toolbar .spacer { flex: 1; }
+    .list-toolbar .count { font-size: 11px; color: var(--muted); }
+
+    .conv-list {
+      max-height: 300px;
+      overflow-y: auto;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+    }
+    .conv-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 8px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .conv-row:last-child { border-bottom: none; }
+    .conv-row:hover { background: var(--row-hover); }
+    .conv-row input[type="checkbox"] {
+      flex: 0 0 14px;
+      cursor: pointer;
+    }
+    .conv-row .conv-date {
+      flex: 0 0 64px;
+      color: var(--muted);
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+    }
+    .conv-row .conv-words {
+      flex: 0 0 68px;
+      text-align: right;
+      color: var(--muted);
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+    }
+    .conv-row .conv-title {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .conv-row .badge {
+      flex: 0 0 auto;
+      font-size: 10px;
+      padding: 1px 5px;
+      border-radius: 3px;
+      background: var(--badge-bg);
+      color: var(--badge-fg);
+      font-weight: 500;
+    }
+
+    /* ── Footer ── */
+    #footer {
+      display: none;
+      margin-top: 8px;
+    }
+    #footer.active { display: block; }
+    .footer-row {
+      display: flex;
+      justify-content: center;
+      margin-top: 6px;
+    }
+    button.link {
+      background: none;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 11px;
+      padding: 2px 0;
+    }
+    button.link:hover { color: var(--accent); }
+
+    .hidden { display: none !important; }
   </style>
 </head>
 <body>
@@ -174,35 +334,58 @@
     <span class="version" id="version"></span>
   </header>
   <main>
-    <div class="row" id="dateRow">
-      <div>
-        <label for="startDate">Start</label>
-        <input type="date" id="startDate">
+    <!-- Setup panel -->
+    <div id="setupPanel">
+      <div id="lastDownload" class="last-download hidden"></div>
+      <div class="setup-row">
+        <span class="toggle-text">Export all conversations</span>
+        <label class="toggle-switch">
+          <input type="checkbox" id="fetchAll" checked>
+          <span class="toggle-track"></span>
+        </label>
       </div>
-      <div>
-        <label for="endDate">End</label>
-        <input type="date" id="endDate">
+      <div class="date-row dates-disabled" id="dateRow">
+        <div>
+          <label for="startDate">Start</label>
+          <input type="date" id="startDate">
+        </div>
+        <div>
+          <label for="endDate">End</label>
+          <input type="date" id="endDate">
+        </div>
       </div>
+      <button class="primary" id="fetchBtn">Fetch conversations</button>
     </div>
-    <label for="rangeField">Filter by</label>
-    <select id="rangeField">
-      <option value="updated_at">Updated at</option>
-      <option value="created_at">Created at</option>
-    </select>
-    <label class="checkbox-row">
-      <input type="checkbox" id="fetchAll">
-      <span>Fetch all conversations (ignore date range)</span>
-    </label>
-    <button class="primary" id="exportBtn">Export</button>
-    <button class="link hidden" id="retryBtn">Retry failed conversations</button>
 
+    <!-- Status -->
     <div id="status">Ready.</div>
     <div class="meta-row">
       <span id="elapsed"></span>
       <button class="cancel hidden" id="cancelBtn">Cancel</button>
     </div>
     <div class="progress"><div id="progressBar"></div></div>
+
+    <!-- Log (stays in original position, below status) -->
     <div class="log" id="log"></div>
+
+    <!-- Conversation list (below log) -->
+    <div id="listPanel">
+      <div class="list-toolbar">
+        <button id="selectAllBtn">Select all</button>
+        <button id="deselectAllBtn">Deselect all</button>
+        <span class="spacer"></span>
+        <span class="count" id="selectionCount"></span>
+      </div>
+      <div class="conv-list" id="convList"></div>
+    </div>
+
+    <!-- Download button + new export link at the very bottom -->
+    <div id="footer">
+      <button class="primary" id="downloadBtn">Download selected</button>
+      <div class="footer-row">
+        <button class="link" id="newExportBtn">← New export</button>
+      </div>
+    </div>
   </main>
   <script src="popup.js"></script>
 </body>
