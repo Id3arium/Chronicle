@@ -79,21 +79,52 @@ def _inject_metrics(
     summary_metrics: dict[str, int],
     ratio: float,
     model: str,
+    *,
+    identity: dict[str, Any] | None = None,
 ) -> str:
-    """Merge length metrics + the producing model into the frontmatter.
+    """Merge ground-truth identity, metrics, and model into the frontmatter.
 
     Parse → mutate dict → reserialize, so a `---` thematic break in the
     summary body can never be mistaken for the closing fence. Existing
     keys Claude wrote are preserved in order; ours are appended.
+
+    `identity` (when provided) stamps uuid, title, created_at, last_active,
+    and project from the pipeline's own records — never trusting Claude to
+    copy these correctly (long conversations cause truncation/hallucination).
     """
     from .metrics import render_with_frontmatter, split_frontmatter
 
     fields, body = split_frontmatter(output)
-    fields["model"] = model
-    fields["original_words"] = orig_words
-    fields["summary_words"] = summary_metrics["words"]
-    fields["compression_ratio"] = ratio
-    return render_with_frontmatter(fields, body)
+
+    # Overwrite identity fields with ground-truth values from the pipeline.
+    if identity:
+        fields["uuid"] = identity["uuid"]
+        fields["title"] = identity.get("title") or "untitled"
+        if identity.get("created_at"):
+            fields["created_at"] = identity["created_at"][:10]  # YYYY-MM-DD
+        if identity.get("updated_at"):
+            fields["last_active"] = identity["updated_at"]
+        if identity.get("project_name"):
+            fields["project"] = identity["project_name"]
+
+    # Insert summarized_at right after last_active so date fields cluster.
+    # Rebuild the dict to control order: everything up through last_active,
+    # then summarized_at, then the rest.
+    ts = now_iso()
+    ordered: dict[str, Any] = {}
+    inserted = False
+    for k, v in fields.items():
+        ordered[k] = v
+        if k == "last_active" and "summarized_at" not in fields:
+            ordered["summarized_at"] = ts
+            inserted = True
+    if not inserted:
+        ordered["summarized_at"] = ts
+    ordered["model"] = model
+    ordered["original_words"] = orig_words
+    ordered["summary_words"] = summary_metrics["words"]
+    ordered["compression_ratio"] = ratio
+    return render_with_frontmatter(ordered, body)
 
 
 def _read_pending_context() -> str:
@@ -548,8 +579,14 @@ def summarize_one(
     from .metrics import split_frontmatter
     summary_metrics = measure_text(split_frontmatter(output)[1])
     ratio = compression_ratio(summary_metrics["chars"], orig_chars)
-    used_model = model or "claude-sonnet-4-6"
-    output = _inject_metrics(output, orig_words, summary_metrics, ratio, used_model)
+    used_model = model or "sonnet"
+    output = _inject_metrics(output, orig_words, summary_metrics, ratio, used_model, identity={
+        "uuid": uuid,
+        "title": conv_meta.get("title"),
+        "created_at": conv_meta.get("created_at"),
+        "updated_at": conv_meta.get("updated_at"),
+        "project_name": conv_meta.get("project_name"),
+    })
     # Atomic write: never leave a half-finished summary on disk if something
     # crashes between bytes. Write to a sibling .tmp and rename on success.
     tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
@@ -652,7 +689,7 @@ def run(args: Any) -> None:
 
     pending_context = _read_pending_context()
     workers = max(1, int(getattr(args, "workers", 1) or 1))
-    model = getattr(args, "model", None) or "claude-sonnet-4-6"
+    model = getattr(args, "model", None) or "sonnet"
     print(
         f"Summarizing {len(targets)} conversation(s). "
         f"Model: {model} · workers: {workers}"

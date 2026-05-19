@@ -632,6 +632,10 @@ def run(args: Any) -> None:
         run_recompute(state)
         print(f"  Stamped parent link into {stamped} child file(s).")
 
-    state_mod.save(state)
+    # Use merge_save so concurrent synthesize processes don't clobber each
+    # other's entries. Each process only owns its own period key.
+    state_mod.merge_save({"entries": {args.period: entry_record}})
+    # Refresh in-memory state for pending.md generation.
+    state = state_mod.load()
     pending_mod.write_pending(state)
     print(f"✓ {args.period} ({tier}) → {out_path.relative_to(data_root().parent)}")

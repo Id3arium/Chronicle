@@ -35,10 +35,12 @@ Staleness is derived, never stored:
 
 from __future__ import annotations
 
+import fcntl
 import json
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from .paths import state_file
 
@@ -47,18 +49,45 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def load() -> dict[str, Any]:
-    path = state_file()
-    if not path.exists():
-        return {
-            "last_ingest": None,
-            "conversations": {},
-            "entries": {},
-            "processed_imports": [],
-        }
-    with path.open("r", encoding="utf-8") as f:
-        data = json.load(f)
-    # Backfill missing top-level keys so older state files keep working.
+def _lock_path() -> Path:
+    """Dedicated lockfile next to state.json. Using a separate file (not
+    state.json itself) because save() does atomic replace via tmp.replace(),
+    which would invalidate any flock held on the original fd."""
+    return state_file().with_suffix(".lock")
+
+
+@contextmanager
+def _shared_lock() -> Iterator[None]:
+    """Shared (read) lock — multiple readers can hold simultaneously."""
+    lock = _lock_path()
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.touch(exist_ok=True)
+    fd = lock.open("r")
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        fd.close()
+
+
+@contextmanager
+def _exclusive_lock() -> Iterator[None]:
+    """Exclusive (write) lock — blocks readers and other writers."""
+    lock = _lock_path()
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.touch(exist_ok=True)
+    fd = lock.open("w")
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        fd.close()
+
+
+def _backfill(data: dict[str, Any]) -> dict[str, Any]:
+    """Backfill missing top-level keys so older state files keep working."""
     data.setdefault("conversations", {})
     data.setdefault("entries", {})
     data.setdefault("processed_imports", [])
@@ -69,14 +98,75 @@ def load() -> dict[str, Any]:
     return data
 
 
+def load() -> dict[str, Any]:
+    path = state_file()
+    if not path.exists():
+        return _backfill({
+            "last_ingest": None,
+            "conversations": {},
+            "entries": {},
+            "processed_imports": [],
+        })
+    with _shared_lock():
+        with path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    return _backfill(data)
+
+
 def save(state: dict[str, Any]) -> None:
     path = state_file()
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2)
-        f.write("\n")
-    tmp.replace(path)
+    with _exclusive_lock():
+        tmp = path.with_suffix(".json.tmp")
+        with tmp.open("w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2)
+            f.write("\n")
+        tmp.replace(path)
+
+
+def merge_save(updates: dict[str, Any]) -> None:
+    """Atomic read-modify-write: re-read state from disk, merge in the
+    provided updates, save. Use this instead of save() when a long-running
+    process (synthesize, summarize) needs to write its results without
+    clobbering changes from other processes that ran concurrently.
+
+    `updates` is a dict of top-level keys to merge:
+      - "entries": {label: record} — merged into state["entries"]
+      - "conversations": {uuid: record} — merged into state["conversations"]
+      - "last_ingest": str — overwrites
+      - "processed_imports": [name, ...] — unioned
+    """
+    path = state_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _exclusive_lock():
+        if path.exists():
+            with path.open("r", encoding="utf-8") as f:
+                state = json.load(f)
+            state = _backfill(state)
+        else:
+            state = _backfill({
+                "last_ingest": None,
+                "conversations": {},
+                "entries": {},
+                "processed_imports": [],
+            })
+
+        # Merge each key type appropriately.
+        for key, val in updates.items():
+            if key in ("conversations", "entries") and isinstance(val, dict):
+                state.setdefault(key, {}).update(val)
+            elif key in ("processed_imports", "processed_exports") and isinstance(val, list):
+                existing = set(state.get(key, []))
+                existing.update(val)
+                state[key] = sorted(existing)
+            else:
+                state[key] = val
+
+        tmp = path.with_suffix(".json.tmp")
+        with tmp.open("w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2)
+            f.write("\n")
+        tmp.replace(path)
 
 
 # ────────────────── freshness ──────────────────
@@ -130,14 +220,23 @@ def reconcile_summaries(state: dict[str, Any]) -> list[str]:
                 c.pop(k, None)
             changed.append(uuid)
             continue
-        # File exists — backfill significance (and anything else from frontmatter
-        # that we care about but don't yet have in state).
-        if c.get("significance") is None:
+        # File exists — backfill significance, summarized_at, and anything
+        # else from frontmatter that we care about but don't yet have in state.
+        needs_backfill = (
+            c.get("significance") is None
+            or c.get("summarized_at") is None
+        )
+        if needs_backfill:
             try:
                 fm = parse_frontmatter(path.read_text(encoding="utf-8"))
-                sig = fm.get("significance")
-                if sig:
-                    c["significance"] = sig
+                did_change = False
+                if c.get("significance") is None and fm.get("significance"):
+                    c["significance"] = fm["significance"]
+                    did_change = True
+                if c.get("summarized_at") is None and fm.get("summarized_at"):
+                    c["summarized_at"] = fm["summarized_at"]
+                    did_change = True
+                if did_change:
                     changed.append(uuid)
             except OSError:
                 pass

@@ -162,6 +162,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_bfl.set_defaults(func=lambda a: __import__("chronicle.backfill_links", fromlist=["run"]).run(a))
 
+    p_rebuild = sub.add_parser(
+        "rebuild-state", aliases=["rbs"],
+        help="Reconstruct state.json from files on disk. Safety net for corruption/drift.",
+    )
+    p_rebuild.add_argument("-n", "--dry-run", action="store_true", help="Scan and report but don't overwrite state.json.")
+    p_rebuild.add_argument("-c", "--compare", action="store_true", help="Compare existing state.json against what disk says. Implies --dry-run.")
+    p_rebuild.set_defaults(func=lambda a: __import__("chronicle.rebuild_state", fromlist=["run"]).run(a))
+
     p_install = sub.add_parser("install-agent", help="Install launchd agent that auto-ingests new files in data/inbox/.")
     p_install.set_defaults(func=_install_agent_cmd)
     p_uninstall = sub.add_parser("uninstall-agent", help="Remove the launchd agent.")
