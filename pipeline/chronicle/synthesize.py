@@ -28,6 +28,7 @@ from typing import Any
 from . import pending as pending_mod
 from . import state as state_mod
 from .calendar import (
+    ABBR_TO_MONTH,
     MONTH_ABBR,
     PeriodParseError,
     canonical_merged_label,
@@ -58,6 +59,56 @@ SPARSE_MONTH_THRESHOLD = 10
 
 def _instruction_file() -> Path:
     return instructions_dir() / "synthesize.txt"
+
+
+def _extract_headline(output: str) -> str | None:
+    """Extract a `headline: ...` directive from the first line of Claude's output."""
+    first_line = output.split("\n", 1)[0].strip()
+    if first_line.lower().startswith("headline:"):
+        return first_line.split(":", 1)[1].strip()
+    return None
+
+
+def _period_to_date_prefix(period: str) -> str:
+    """Convert a period label to a YYYY-MM-style sortable prefix.
+
+    2026_Apr_H1  → 2026-04-H1
+    2026_Apr_H2  → 2026-04-H2
+    2026_Apr_H1-H2 → 2026-04-H1-H2
+    2026_Apr     → 2026-04
+    2026_Q2      → 2026-Q2
+    2026         → 2026
+    """
+    parts = period.split("_")
+    year = parts[0]
+    if len(parts) == 1:
+        return year  # yearly
+    month_part = parts[1]
+    # Quarter?
+    if month_part.startswith("Q"):
+        return f"{year}-{month_part}"
+    # Month abbr → numeric
+    month_num = ABBR_TO_MONTH.get(month_part)
+    if not month_num:
+        return period  # fallback
+    prefix = f"{year}-{month_num:02d}"
+    if len(parts) >= 3:
+        prefix += f"-{parts[2]}"  # H1, H2, H1-H2
+    return prefix
+
+
+def entry_filename(period: str, headline: str | None = None) -> str:
+    """Build the entry filename.
+
+    With headline:  2026-04-H1_building-chronicle-pipeline_Entry.md
+    Without:        2026-04-H1_Entry.md
+    """
+    from .paths import slugify
+    prefix = _period_to_date_prefix(period)
+    if headline:
+        slug = slugify(headline, max_len=50)
+        return f"{prefix}_{slug}_Entry.md"
+    return f"{prefix}_Entry.md"
 
 
 def _estimate_tokens(char_count: int) -> int:
@@ -555,6 +606,14 @@ def run(args: Any) -> None:
         print(f"claude error: {e}")
         raise SystemExit(1)
 
+    # Extract the headline directive from the first line.
+    headline = _extract_headline(output)
+    if headline:
+        # Strip the directive line so it doesn't end up in the file.
+        output = output.split("\n", 1)[1].lstrip("\n")
+    else:
+        headline = None
+
     # Down-links: a `## Sources` section of [[wikilinks]] to every child
     # this entry was synthesized from (summary files for a half, child
     # entries for a rollup). set_sources is idempotent and runs BEFORE
@@ -582,9 +641,17 @@ def run(args: Any) -> None:
         # `fm.get("is_partial")` is falsy and old entries stay valid.
         identity["is_partial"] = "true"
         identity["partial_through"] = today
+    if headline:
+        identity["headline"] = headline
     output = _inject_entry_metrics(output, {**identity, **entry_metrics})
 
-    out_path = entries_dir() / f"{args.period}_Entry.md"
+    out_path = entries_dir() / entry_filename(args.period, headline)
+    # If re-synthesizing and the headline changed, remove the old file.
+    existing_entry = state["entries"].get(args.period)
+    if existing_entry and existing_entry.get("entry_file"):
+        old_path = data_root() / existing_entry["entry_file"]
+        if old_path.exists() and old_path != out_path:
+            old_path.unlink()
     # Atomic write: a partially-written entry would poison subsequent rollups
     # (a stale month read of a half-truncated H1 entry, etc).
     tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
