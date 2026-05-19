@@ -256,6 +256,70 @@ def _inject_entry_metrics(output: str, metrics: dict[str, Any]) -> str:
     return render_with_frontmatter(fields, body)
 
 
+def _write_empty_stub(args: Any, tier: str, range_start: str, range_end: str,
+                      state: dict[str, Any]) -> None:
+    """Write a minimal stub entry for a period with zero conversations.
+
+    No Claude call. The stub exists so higher-tier rollups see a complete
+    set of children and don't refuse to build. The rollup tier can mention
+    that this period was quiet.
+    """
+    from .metrics import render_with_frontmatter
+
+    body = (
+        f"# {args.period} Entry\n"
+        f"**{range_start} – {range_end} · 0 conversations · {tier}**\n\n"
+        f"---\n\n"
+        f"*No conversations in this period.*\n\n"
+        f"---\n"
+        f"*Entry closed: {range_end}*\n"
+    )
+    fields = {
+        "period": args.period,
+        "tier": tier,
+        "range_start": range_start,
+        "range_end": range_end,
+        "synthesized_at": now_iso(),
+        "model": "none",
+        "input_count": 0,
+        "headline": "No Activity",
+        "total_source_conversation_words": 0,
+        "total_source_summary_words": 0,
+        "aggregate_source_compression_ratio": 0,
+        "entry_words": len(body.split()),
+        "entry_compression_ratio": 0,
+    }
+    output = render_with_frontmatter(fields, body)
+    out_path = entries_dir() / entry_filename(args.period, "No Activity")
+    tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
+    tmp_path.write_text(output, encoding="utf-8")
+    os.replace(tmp_path, out_path)
+
+    entry_record = {
+        "tier": tier,
+        "entry_file": str(out_path.relative_to(data_root())),
+        "synthesized_at": now_iso(),
+        "range_start": range_start,
+        "range_end": range_end,
+        "entry_chars": len(output),
+        "is_partial": False,
+        "model": "none",
+        "headline": "No Activity",
+        "total_source_conversation_words": 0,
+        "total_source_summary_words": 0,
+        "aggregate_source_compression_ratio": 0,
+        "entry_words": len(body.split()),
+        "entry_compression_ratio": 0,
+    }
+    state["entries"][args.period] = entry_record
+    state_mod.merge_save({"entries": {args.period: entry_record}})
+
+    print(
+        f"✓ {args.period} ({tier}) — empty period, stub written → "
+        f"{out_path.relative_to(data_root().parent)}"
+    )
+
+
 # ────────────────── input assembly ──────────────────
 
 def _gather_half_inputs(
@@ -520,10 +584,7 @@ def run(args: Any) -> None:
                     print("Aborted. Summarize first, then re-run synthesize.")
                     return
         if not items:
-            print(
-                f"No non-deleted conversations in {args.period} "
-                f"({range_start} → {range_end}). Nothing to synthesize."
-            )
+            _write_empty_stub(args, tier, range_start, range_end, state)
             return
     else:
         items, missing, total_chars = _gather_rollup_inputs(state, args.period)
