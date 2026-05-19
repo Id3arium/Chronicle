@@ -68,13 +68,27 @@ stdout verbatim to data/entries/[label]_Entry.md.
 
 ABSOLUTE RULES on output:
 - The very first line must be a `headline:` directive — a 3–5 word title-
-  case phrase capturing the dominant theme of the period. Examples:
-  `headline: Building Chronicle Pipeline`, `headline: STRC Trading System`,
-  `headline: Framework Deep Dives`. Be specific over generic. Never include
-  PII in headlines — no dollar amounts, no city names, no personal names,
-  no account details. "Portfolio Loss and Rebuilding" not "DollarAmmount Loss in CityName". The headline appears in filenames visible in file
-  managers and version control. The wrapper
+  case phrase capturing the dominant theme of the period. Be specific over
+  generic. Never include PII in headlines — no dollar amounts, no city
+  names, no personal names, no account details. "Portfolio Loss and
+  Rebuilding" not "DollarAmount Loss in CityName". The headline appears in
+  filenames visible in file managers and version control. The wrapper
   strips this line and uses it in the filename.
+
+  Headline selection by tier:
+  - Half: the dominant project or activity. What was built, explored, or
+    decided. Examples: `headline: Building Chronicle Pipeline`,
+    `headline: STRC Trading System`.
+  - Quarter: the arc across three months. What started, shifted, or
+    resolved. Examples: `headline: Loss and Stubborn Rebuilding`,
+    `headline: Builder Mode to Exposure`.
+  - Year: the single idea or disposition that influenced the most other
+    threads — not the project with the most conversations, but the
+    upstream conviction or framework that shaped how everything else was
+    approached. Think network effects: which idea, if removed, would
+    change the most other conversations? Examples:
+    `headline: Substrate-First Disposition`,
+    `headline: Trust Minimization Everywhere`.
 - The second line must be `#` (the entry's H1 heading, e.g.
   `# 2026_Apr_H1 Entry`). The wrapper prepends a frontmatter block with
   length metrics (entry words, source totals, compression ratios)

@@ -108,6 +108,14 @@ def build_parser() -> argparse.ArgumentParser:
         "-s", "--significance",
         help="Filter by significance: high, medium (or med), low.",
     )
+    p_ls.add_argument(
+        "-e", "--entries", action="store_true",
+        help="Show synthesized entries (tree view) instead of conversations.",
+    )
+    p_ls.add_argument(
+        "--stubs", action="store_true",
+        help="Include no-activity stub entries (only with --entries).",
+    )
     p_ls.set_defaults(func=lambda a: __import__("chronicle.ls", fromlist=["run"]).run(a))
 
     p_find = sub.add_parser(

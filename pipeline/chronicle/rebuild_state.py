@@ -182,25 +182,20 @@ def _scan_entries(ent_dir: Path) -> dict[str, dict[str, Any]]:
     if not ent_dir.exists():
         return records
 
-    for entry_file in sorted(ent_dir.iterdir()):
-        if not entry_file.name.endswith("_Entry.md"):
-            continue
+    for entry_file in sorted(ent_dir.rglob("*_Entry.md")):
         try:
             text = entry_file.read_text(encoding="utf-8")
         except OSError:
             continue
 
         fm = parse_frontmatter(text)
-        # Period label is authoritative from frontmatter; filename is
-        # just for sorting (may contain a headline slug).
         label = fm.get("period")
         if not label:
-            # Legacy fallback: derive from filename.
             label = entry_file.name.removesuffix("_Entry.md")
         entry_metrics = measure_text(text)
 
         record: dict[str, Any] = {
-            "entry_file": f"entries/{entry_file.name}",
+            "entry_file": str(Path("entries") / entry_file.relative_to(ent_dir)),
             "synthesized_at": fm.get("synthesized_at"),
             "range_start": fm.get("range_start"),
             "range_end": fm.get("range_end"),

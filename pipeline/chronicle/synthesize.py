@@ -97,18 +97,47 @@ def _period_to_date_prefix(period: str) -> str:
     return prefix
 
 
-def entry_filename(period: str, headline: str | None = None) -> str:
-    """Build the entry filename.
+def _entry_subdir(period: str) -> str:
+    """Return the year/quarter subdirectory for an entry.
 
-    With headline:  2026-04-H1_building-chronicle-pipeline_Entry.md
-    Without:        2026-04-H1_Entry.md
+    Halves live inside their quarter folder:    2025/Q2/
+    Quarters live inside their quarter folder:  2025/Q2/
+    Years live at the year level:               2025/
+    """
+    parts = period.split("_")
+    year = parts[0]
+    if len(parts) == 1:
+        return year  # yearly → entries/YYYY/
+    month_part = parts[1]
+    if month_part.startswith("Q"):
+        q = month_part
+        return f"{year}/{q}"  # quarterly → entries/YYYY/Qn/
+    month_num = ABBR_TO_MONTH.get(month_part)
+    if not month_num:
+        return year  # fallback
+    q = (month_num - 1) // 3 + 1
+    return f"{year}/Q{q}"
+
+
+def entry_filepath(period: str, headline: str | None = None) -> str:
+    """Build the entry path relative to entries_dir().
+
+    Includes year/quarter subdirectory:
+      2025_May_H1 → 2025/Q2/2025-05-H1_bitcoin-defense_Entry.md
+      2025_Q2     → 2025/2025-Q2_volatility_Entry.md
+      2025        → 2025_the-year-of-building_Entry.md
     """
     from .paths import slugify
     prefix = _period_to_date_prefix(period)
     if headline:
         slug = slugify(headline, max_len=50)
-        return f"{prefix}_{slug}_Entry.md"
-    return f"{prefix}_Entry.md"
+        name = f"{prefix}_{slug}_Entry.md"
+    else:
+        name = f"{prefix}_Entry.md"
+    subdir = _entry_subdir(period)
+    if subdir:
+        return f"{subdir}/{name}"
+    return name
 
 
 def _estimate_tokens(char_count: int) -> int:
@@ -290,7 +319,8 @@ def _write_empty_stub(args: Any, tier: str, range_start: str, range_end: str,
         "entry_compression_ratio": 0,
     }
     output = render_with_frontmatter(fields, body)
-    out_path = entries_dir() / entry_filename(args.period, "No Activity")
+    out_path = entries_dir() / entry_filepath(args.period, "No Activity")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
     tmp_path.write_text(output, encoding="utf-8")
     os.replace(tmp_path, out_path)
@@ -706,7 +736,8 @@ def run(args: Any) -> None:
         identity["headline"] = headline
     output = _inject_entry_metrics(output, {**identity, **entry_metrics})
 
-    out_path = entries_dir() / entry_filename(args.period, headline)
+    out_path = entries_dir() / entry_filepath(args.period, headline)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     # If re-synthesizing and the headline changed, remove the old file.
     existing_entry = state["entries"].get(args.period)
     if existing_entry and existing_entry.get("entry_file"):

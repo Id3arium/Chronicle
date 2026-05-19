@@ -2,6 +2,8 @@
 
 Columns: date · orig words · summ words · ratio · stale? · title
 Sorted by created_at. Optional --period to scope.
+
+`chronicle ls --entries` — tree view of synthesized entry files.
 """
 
 from __future__ import annotations
@@ -12,7 +14,73 @@ from . import state as state_mod
 from .calendar import PeriodParseError, parse_period
 
 
+def _run_entries(args: Any) -> None:
+    """Tree view of entry files, excluding no-activity stubs."""
+    state = state_mod.load()
+    entries = state.get("entries", {})
+    if not entries:
+        print("No entries.")
+        return
+
+    show_stubs = getattr(args, "stubs", False)
+
+    # Group by year → quarter → label
+    tree: dict[str, dict[str, list[tuple[str, dict]]]] = {}
+    for label, rec in sorted(entries.items()):
+        parts = label.split("_")
+        year = parts[0]
+        tier = rec.get("tier", "")
+        headline = rec.get("headline", "")
+
+        if not show_stubs and headline == "No Activity":
+            continue
+
+        # Determine quarter bucket
+        if tier == "year":
+            q_key = ""
+        elif tier == "quarter":
+            q_key = parts[1] if len(parts) > 1 else ""
+        else:
+            # Half — derive quarter from month
+            from .calendar import ABBR_TO_MONTH
+            month_part = parts[1] if len(parts) > 1 else ""
+            month_num = ABBR_TO_MONTH.get(month_part, 0)
+            q_num = (month_num - 1) // 3 + 1 if month_num else 0
+            q_key = f"Q{q_num}" if q_num else ""
+
+        tree.setdefault(year, {}).setdefault(q_key, []).append((label, rec))
+
+    for year in sorted(tree):
+        quarters = tree[year]
+        # Print year-level entry if present
+        if "" in quarters:
+            for label, rec in quarters[""]:
+                words = rec.get("entry_words", 0)
+                hl = rec.get("headline", "")
+                print(f"  {label:<22} {words:>5}w  {hl}")
+        for qk in sorted(k for k in quarters if k):
+            items = sorted(quarters[qk], key=lambda x: x[1].get("range_start", ""))
+            for label, rec in items:
+                tier = rec.get("tier", "")
+                words = rec.get("entry_words", 0)
+                hl = rec.get("headline", "")
+                indent = "      " if tier == "half" else "    "
+                print(f"{indent}{label:<22} {words:>5}w  {hl}")
+
+    # Totals
+    shown = sum(
+        1 for _, rec in entries.items()
+        if show_stubs or rec.get("headline") != "No Activity"
+    )
+    total = len(entries)
+    stubs = total - shown if not show_stubs else 0
+    print(f"\n  {shown} entries" + (f" ({stubs} no-activity stubs hidden, use --stubs)" if stubs else ""))
+
+
 def run(args: Any) -> None:
+    if getattr(args, "entries", False):
+        return _run_entries(args)
+
     state = state_mod.load()
 
     changed = state_mod.reconcile_summaries(state)
