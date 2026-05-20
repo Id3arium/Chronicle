@@ -1,19 +1,17 @@
 """Period label parsing + calendar math for Chronicle rollups.
 
 Tier hierarchy (lowest → highest):
-  half:    2026_Apr_H1     (days 1–15)   — reads conversation summaries
-  half:    2026_Apr_H2     (days 16–end) — reads conversation summaries
-  half:    2026_Apr_H1-H2  (full month)  — sparse-month merged form,
-                                            same tier as a half, just wider
-  half:    2026_Apr        (alias of H1-H2; produced by auto-merge logic)
-  quarter: 2026_Q2                       — reads 6 halves directly
-  year:    2026                          — reads 4 quarters
+  half:    2026_04_H1     (days 1–15)   — reads conversation summaries
+  half:    2026_04_H2     (days 16–end) — reads conversation summaries
+  half:    2026_04_H1-H2  (full month)  — sparse-month merged form,
+                                           same tier as a half, just wider
+  half:    2026_04        (alias of H1-H2; produced by auto-merge logic)
+  quarter: 2026_Q2                      — reads 6 halves directly
+  year:    2026                         — reads 4 quarters
 
-The monthly tier was dropped: most months don't compress meaningfully from
-two halves into one entry, and sparse months are better served by a single
-"merged half" entry that covers the whole month at half-tier granularity.
-The 2026_Apr label is kept as an alias for 2026_Apr_H1-H2 so users can
-type either form interchangeably.
+Canonical labels use numeric months (2026_04_H1). Abbreviated forms
+(2026_Apr_H1) and dash-separated forms (2026-04-H1) are accepted as
+input but canonicalized to the numeric underscore form.
 
 H1 is always days 1–15, H2 is day 16 through the last day of the month.
 H1-H2 is the full month. Ranges are inclusive.
@@ -166,18 +164,18 @@ def child_tier(tier: str) -> str | None:
 
 
 def canonical_merged_label(year: int, month: int) -> str:
-    """The label we produce for an auto-merged sparse month: 2026_Apr_H1-H2."""
-    return f"{year}_{MONTH_ABBR[month - 1]}_H1-H2"
+    """The label we produce for an auto-merged sparse month: 2026_04_H1-H2."""
+    return f"{year}_{month:02d}_H1-H2"
 
 
 def canonical_label(label: str) -> str:
-    """Convert any accepted label form to the canonical underscore/abbr form.
+    """Convert any accepted label form to the canonical numeric form.
 
-    2026-03-h1   → 2026_Mar_H1
-    2026-03      → 2026_Mar
+    2026-03-h1   → 2026_03_H1
+    2026-03      → 2026_03
     2026-q2      → 2026_Q2
-    2026_04_H1   → 2026_Apr_H1
-    2026_Apr_H1  → 2026_Apr_H1  (already canonical, returned as-is)
+    2026_Apr_H1  → 2026_04_H1
+    2026_04_H1   → 2026_04_H1  (already canonical, returned as-is)
     2026         → 2026          (already canonical)
     """
     tier, rs, re_ = parse_period(label)
@@ -190,14 +188,14 @@ def canonical_label(label: str) -> str:
         q = (start.month - 1) // 3 + 1
         return f"{start.year}_Q{q}"
     # half tier — determine H1, H2, or H1-H2 from the date range
-    abbr = MONTH_ABBR[start.month - 1]
+    mm = f"{start.month:02d}"
     end = date.fromisoformat(re_)
     if start.day == 1 and end.day <= 15:
-        return f"{start.year}_{abbr}_H1"
+        return f"{start.year}_{mm}_H1"
     if start.day == 16:
-        return f"{start.year}_{abbr}_H2"
+        return f"{start.year}_{mm}_H2"
     # Full month (H1-H2 or bare month alias)
-    return f"{start.year}_{abbr}_H1-H2"
+    return f"{start.year}_{mm}_H1-H2"
 
 
 def children_for(label: str) -> list[str]:
@@ -222,8 +220,7 @@ def children_for(label: str) -> list[str]:
         q = (start.month - 1) // 3 + 1
         out = []
         for m in range((q - 1) * 3 + 1, (q - 1) * 3 + 4):
-            abbr = MONTH_ABBR[m - 1]
-            out.append(f"{year}_{abbr}_H1")
-            out.append(f"{year}_{abbr}_H2")
+            out.append(f"{year}_{m:02d}_H1")
+            out.append(f"{year}_{m:02d}_H2")
         return out
     return []

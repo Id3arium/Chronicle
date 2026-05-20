@@ -29,7 +29,6 @@ from . import pending as pending_mod
 from . import state as state_mod
 from .calendar import (
     ABBR_TO_MONTH,
-    MONTH_ABBR,
     PeriodParseError,
     canonical_merged_label,
     child_tier,
@@ -72,12 +71,13 @@ def _extract_headline(output: str) -> str | None:
 def _period_to_date_prefix(period: str) -> str:
     """Convert a period label to a YYYY-MM-style sortable prefix.
 
-    2026_Apr_H1  → 2026-04-H1
-    2026_Apr_H2  → 2026-04-H2
-    2026_Apr_H1-H2 → 2026-04-H1-H2
-    2026_Apr     → 2026-04
-    2026_Q2      → 2026-Q2
-    2026         → 2026
+    2026_04_H1     → 2026-04-H1
+    2026_04_H1-H2  → 2026-04-H1-H2
+    2026_04        → 2026-04
+    2026_Q2        → 2026-Q2
+    2026           → 2026
+
+    Also accepts legacy abbreviated form (2026_Apr_H1).
     """
     parts = period.split("_")
     year = parts[0]
@@ -87,10 +87,13 @@ def _period_to_date_prefix(period: str) -> str:
     # Quarter?
     if month_part.startswith("Q"):
         return f"{year}-{month_part}"
-    # Month abbr → numeric
+    # Month: numeric ("04") or abbreviated ("Apr")
     month_num = ABBR_TO_MONTH.get(month_part)
     if not month_num:
-        return period  # fallback
+        try:
+            month_num = int(month_part)
+        except ValueError:
+            return period  # fallback
     prefix = f"{year}-{month_num:02d}"
     if len(parts) >= 3:
         prefix += f"-{parts[2]}"  # H1, H2, H1-H2
@@ -112,9 +115,13 @@ def _entry_subdir(period: str) -> str:
     if month_part.startswith("Q"):
         q = month_part
         return f"{year}/{q}"  # quarterly → entries/YYYY/Qn/
+    # month_part is numeric ("04") or abbreviated ("Apr")
     month_num = ABBR_TO_MONTH.get(month_part)
     if not month_num:
-        return year  # fallback
+        try:
+            month_num = int(month_part)
+        except ValueError:
+            return year  # fallback
     q = (month_num - 1) // 3 + 1
     return f"{year}/Q{q}"
 
@@ -123,9 +130,9 @@ def entry_filepath(period: str, headline: str | None = None) -> str:
     """Build the entry path relative to entries_dir().
 
     Includes year/quarter subdirectory:
-      2025_May_H1 → 2025/Q2/2025-05-H1_bitcoin-defense_Entry.md
-      2025_Q2     → 2025/2025-Q2_volatility_Entry.md
-      2025        → 2025_the-year-of-building_Entry.md
+      2025_05_H1  → 2025/Q2/2025-05-H1_bitcoin-defense_Entry.md
+      2025_Q2     → 2025/Q2/2025-Q2_volatility_Entry.md
+      2025        → 2025/2025_the-year-of-building_Entry.md
     """
     from .paths import slugify
     prefix = _period_to_date_prefix(period)
@@ -167,23 +174,22 @@ def _half_label_kind(label: str) -> str | None:
     return None
 
 
-def _month_year_abbr(label: str) -> tuple[int, str]:
-    """Extract (year, month_abbr) from any half-tier label.
-    Numeric months are converted to their abbr equivalent."""
+def _month_year_num(label: str) -> tuple[int, int]:
+    """Extract (year, month_number) from any half-tier label.
+    Accepts both numeric (2026_04_H1) and abbreviated (2026_Apr_H1) forms."""
     import re as _re
-    m = _re.match(r"(\d{4})_([A-Z][a-z]{2})", label)
-    if m:
-        return int(m.group(1)), m.group(2)
     m = _re.match(r"(\d{4})_(0[1-9]|1[0-2])", label)
     if m:
-        return int(m.group(1)), MONTH_ABBR[int(m.group(2)) - 1]
+        return int(m.group(1)), int(m.group(2))
+    m = _re.match(r"(\d{4})_([A-Z][a-z]{2})", label)
+    if m:
+        return int(m.group(1)), ABBR_TO_MONTH[m.group(2)]
     raise PeriodParseError(f"Cannot extract year/month from '{label}'")
 
 
-def _month_conversation_count(state: dict[str, Any], year: int, abbr: str) -> int:
+def _month_conversation_count(state: dict[str, Any], year: int, month: int) -> int:
     """Count non-deleted conversations whose created_at falls in this month."""
-    # Reuse parse_period via the merged label which spans the full month.
-    _t, rs, re_ = parse_period(f"{year}_{abbr}")
+    _t, rs, re_ = parse_period(f"{year}_{month:02d}")
     return len(state_mod.conversations_in_period(state, rs, re_))
 
 
@@ -205,14 +211,15 @@ def _resolve_half_label(
     if kind is None:
         return requested, None  # non-half label, leave alone
 
-    year, abbr = _month_year_abbr(requested)
-    count = _month_conversation_count(state, year, abbr)
-    canonical_merged = canonical_merged_label(year, abbr_to_int(abbr))
+    year, month = _month_year_num(requested)
+    count = _month_conversation_count(state, year, month)
+    canonical_merged = canonical_merged_label(year, month)
+    mm = f"{month:02d}"
 
     if kind in ("half_h1", "half_h2"):
         if count < SPARSE_MONTH_THRESHOLD:
             msg = (
-                f"{year}_{abbr} has {count} conversations (< {SPARSE_MONTH_THRESHOLD}). "
+                f"{year}_{mm} has {count} conversations (< {SPARSE_MONTH_THRESHOLD}). "
                 f"Auto-merging halves into a single entry: {canonical_merged}."
             )
             return canonical_merged, msg
@@ -222,23 +229,19 @@ def _resolve_half_label(
     if count >= SPARSE_MONTH_THRESHOLD:
         # Refuse the merged form when the month has enough material for halves.
         raise SystemExit(
-            f"{year}_{abbr} has {count} conversations (>= {SPARSE_MONTH_THRESHOLD}). "
+            f"{year}_{mm} has {count} conversations (>= {SPARSE_MONTH_THRESHOLD}). "
             f"Run the halves separately:\n"
-            f"  chronicle synthesize --period {year}_{abbr}_H1\n"
-            f"  chronicle synthesize --period {year}_{abbr}_H2\n"
+            f"  chronicle synthesize --period {year}_{mm}_H1\n"
+            f"  chronicle synthesize --period {year}_{mm}_H2\n"
             f"The merged form is for sparse months only."
         )
-    # Sparse + explicitly merged: normalize the alias 2026_Apr to 2026_Apr_H1-H2.
+    # Sparse + explicitly merged: normalize the alias 2026_04 to 2026_04_H1-H2.
     if requested != canonical_merged:
         return canonical_merged, (
             f"Normalizing '{requested}' to canonical '{canonical_merged}'."
         )
     return canonical_merged, None
 
-
-def abbr_to_int(abbr: str) -> int:
-    from .calendar import ABBR_TO_MONTH
-    return ABBR_TO_MONTH[abbr]
 
 
 def _build_entry_metrics(

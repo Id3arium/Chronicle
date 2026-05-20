@@ -41,31 +41,55 @@ def _run_entries(args: Any) -> None:
         elif tier == "quarter":
             q_key = parts[1] if len(parts) > 1 else ""
         else:
-            # Half — derive quarter from month
+            # Half — derive quarter from month (numeric or abbreviated)
             from .calendar import ABBR_TO_MONTH
             month_part = parts[1] if len(parts) > 1 else ""
             month_num = ABBR_TO_MONTH.get(month_part, 0)
+            if not month_num:
+                try:
+                    month_num = int(month_part)
+                except ValueError:
+                    month_num = 0
             q_num = (month_num - 1) // 3 + 1 if month_num else 0
             q_key = f"Q{q_num}" if q_num else ""
 
         tree.setdefault(year, {}).setdefault(q_key, []).append((label, rec))
 
+    def _fmt_row(label: str, rec: dict, indent: str) -> str:
+        orig = rec.get("total_source_conversation_words") or 0
+        entry_w = rec.get("entry_words") or 0
+        ratio = rec.get("entry_compression_ratio")
+        hl = rec.get("headline", "")
+        orig_s = f"{orig:>9,}" if orig else "      —  "
+        entry_s = f"{entry_w:>7,}"
+        ratio_s = f"{ratio:.3f}" if ratio is not None else "  n/a"
+        return f"{indent}{label:<20} {orig_s}  {entry_s}  {ratio_s:>6}  {hl}"
+
+    # Header
+    print(f"{'':20}  {'orig wds':>9}  {'entry':>7}  {'ratio':>6}  headline")
+    print("-" * 90)
+
+    first_year = True
     for year in sorted(tree):
+        if not first_year:
+            print()
+        first_year = False
         quarters = tree[year]
         # Print year-level entry if present
         if "" in quarters:
             for label, rec in quarters[""]:
-                words = rec.get("entry_words", 0)
-                hl = rec.get("headline", "")
-                print(f"  {label:<22} {words:>5}w  {hl}")
+                print(_fmt_row(label, rec, ""))
         for qk in sorted(k for k in quarters if k):
-            items = sorted(quarters[qk], key=lambda x: x[1].get("range_start", ""))
+            # Sort: quarter entry first, then halves by range_start
+            tier_order = {"quarter": 0, "half": 1}
+            items = sorted(quarters[qk], key=lambda x: (
+                tier_order.get(x[1].get("tier", ""), 2),
+                x[1].get("range_start", ""),
+            ))
             for label, rec in items:
                 tier = rec.get("tier", "")
-                words = rec.get("entry_words", 0)
-                hl = rec.get("headline", "")
-                indent = "      " if tier == "half" else "    "
-                print(f"{indent}{label:<22} {words:>5}w  {hl}")
+                indent = "    " if tier == "half" else "  "
+                print(_fmt_row(label, rec, indent))
 
     # Totals
     shown = sum(
@@ -74,7 +98,7 @@ def _run_entries(args: Any) -> None:
     )
     total = len(entries)
     stubs = total - shown if not show_stubs else 0
-    print(f"\n  {shown} entries" + (f" ({stubs} no-activity stubs hidden, use --stubs)" if stubs else ""))
+    print(f"\n{shown} entries" + (f" ({stubs} no-activity stubs hidden, use --stubs)" if stubs else ""))
 
 
 def run(args: Any) -> None:
