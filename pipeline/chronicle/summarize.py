@@ -271,11 +271,11 @@ def summarize_one(
     # Always compute the conditional target so the model sees a concrete
     # number. It's framed as "if you judge this high-significance" so it
     # doesn't force anything — but removes the need for the model to do
-    # the 7% math itself (which it won't).
-    high_floor = max(int(orig_words * 0.07), 500) if orig_words else 500
+    # the 10% math itself (which it won't).
+    high_floor = max(int(orig_words * 0.10), 500) if orig_words else 500
     target_line = (
         f"If you judge this high-significance: minimum {high_floor:,} words "
-        f"(7% of {orig_words:,}).\n"
+        f"(10% of {orig_words:,}).\n"
     )
 
     metrics_block = (
@@ -424,7 +424,14 @@ def summarize_one(
             return False
     else:
         # Sliding window: chunk the conversation, summarize each chunk
-        # with the running summary carried forward as context.
+        # sequentially. Each segment after the first receives the previous
+        # segment's summary as read-only context so it understands references
+        # to earlier material. Segments are concatenated at the end — no
+        # "stitch" pass that could compress the output.
+        #
+        # A lightweight final call generates only frontmatter + opening
+        # paragraph from the concatenated segments. This is narrow enough
+        # that the model doesn't treat it as a summarization opportunity.
         max_chars = chunk_size_for(conv_text, significance=significance)
         chunks = chunk_messages(conv_text, max_chars=max_chars)
         n_chunks = len(chunks)
@@ -439,15 +446,9 @@ def summarize_one(
             f"{n_chunks} chunks, sliding window)",
             flush=True,
         )
-        # Segment-then-stitch: summarize each chunk independently, then
-        # a final pass adds frontmatter and lightly edits the concatenation.
-        # This avoids the "re-summarize and compress" failure mode where
-        # asking the model to append to a running summary causes it to
-        # rewrite + shrink prior content instead.
-        #
         # Segments are cached to disk so a rate-limit hit on a later segment
-        # or the stitch pass doesn't lose completed work. On retry, cached
-        # segments are loaded and only remaining ones are processed.
+        # doesn't lose completed work. On retry, cached segments are loaded
+        # and only remaining ones are processed.
         from .paths import segments_dir
         seg_cache_dir = segments_dir() / uuid
         seg_cache_dir.mkdir(parents=True, exist_ok=True)
@@ -463,21 +464,42 @@ def summarize_one(
                     print(f"    segment {i}/{n_chunks} loaded from cache ({len(cached.split()):,} words)", flush=True)
                     continue
 
-            carryover = (
+            # Build context block: for segments 2+, include the previous
+            # segment's summary so the model understands references to
+            # earlier material (terms introduced, decisions made, etc.).
+            if i == 1 or not segment_summaries:
+                context_block = ""
+            else:
+                prev_summary = segment_summaries[-1]
+                context_block = (
+                    f"# Context from previous segment ({i-1}/{n_chunks})\n\n"
+                    f"The following is the summary of the previous segment. "
+                    f"It is provided ONLY so you understand references to "
+                    f"earlier material (terms, decisions, context). Do NOT "
+                    f"re-summarize or repeat this content — it will be "
+                    f"concatenated separately. Your job is to summarize ONLY "
+                    f"the new material in this segment.\n\n"
+                    f"{prev_summary}\n\n"
+                    f"---\n\n"
+                )
+
+            segment_instruction = (
                 f"# Note: chunked conversation (segment {i} of {n_chunks})\n\n"
                 f"This conversation is too long for a single pass. You are "
                 f"summarizing segment {i} of {n_chunks}. Produce a thorough "
-                f"summary of ONLY the material in this segment. No frontmatter. "
+                f"summary of ONLY the NEW material in this segment. "
+                f"No frontmatter. "
                 f"No opening paragraph situating the conversation — just the "
                 f"section-by-section coverage of what's in this chunk. Be "
                 f"detailed: every distinct idea, frame, decision, coinage. "
-                f"These segments will be concatenated, so do not reference "
-                f"other segments or add transitions.\n\n"
+                f"These segment summaries will be mechanically concatenated "
+                f"at the end (no editing pass), so each segment must stand "
+                f"on its own while not repeating earlier segments.\n\n"
                 f"**Your segment summary should be at least {per_segment_target:,} "
                 f"words.** The full conversation target is {high_floor:,} words "
                 f"across {n_chunks} segments. It is better to write too much "
-                f"than too little — the stitch pass will not add material, so "
-                f"anything you leave out now is lost permanently.\n\n"
+                f"than too little — there is no later pass that adds material, "
+                f"so anything you leave out now is lost permanently.\n\n"
                 f"---\n\n"
             )
             input_text = (
@@ -485,7 +507,8 @@ def summarize_one(
                 f"---\n\n"
                 f"{metrics_block}\n"
                 f"---\n\n"
-                f"{carryover}"
+                f"{context_block}"
+                f"{segment_instruction}"
                 f"# Conversation JSON (segment {i}/{n_chunks})\n\n{chunk}\n"
             )
             try:
@@ -503,50 +526,55 @@ def summarize_one(
             seg_file.write_text(seg_text, encoding="utf-8")
             print(f"    segment {i}/{n_chunks} done ({len(seg_text.split()):,} words)", flush=True)
 
-        # Final stitch pass: concatenated segments → unified summary with
-        # frontmatter. This pass sees only the segments, not the raw
-        # conversation, so it can't over-compress from source.
+        # Mechanical concatenation — no compression pass.
         concatenated = "\n\n".join(segment_summaries)
         concat_words = len(concatenated.split())
         print(
-            f"    stitching {n_chunks} segments ({concat_words:,} words total)",
+            f"    concatenated {n_chunks} segments ({concat_words:,} words total)",
             flush=True,
         )
-        stitch_input = (
+
+        # Lightweight frontmatter-only pass: the model sees the concatenated
+        # segments and produces ONLY the YAML frontmatter block + a short
+        # opening paragraph. The body is NOT re-processed.
+        frontmatter_input = (
             f"# Pending work context\n\n{pending_context}\n\n"
             f"---\n\n"
             f"{metrics_block}\n"
             f"---\n\n"
-            f"# Stitch pass: combine segment summaries into a final summary\n\n"
-            f"Below are {n_chunks} independently-written segment summaries of "
-            f"a single conversation, in chronological order. Your job:\n\n"
-            f"1. Add the standard frontmatter (title, uuid, created_at, etc.)\n"
-            f"2. Add a short opening paragraph (2-4 sentences) situating the "
-            f"conversation\n"
-            f"3. Concatenate the segment bodies — preserve ALL sections and "
-            f"content. You may lightly edit for flow (remove duplicate "
-            f"transitions, fix cross-references) but do NOT compress, merge, "
-            f"or drop sections. The segments already represent the right level "
-            f"of detail.\n"
-            f"4. Add a Specifics tail if needed\n\n"
-            f"**The output MUST be at least {concat_words} words.** If your "
-            f"output is significantly shorter than the input segments, you are "
-            f"compressing when you should be preserving.\n\n"
+            f"# Frontmatter generation for a chunked conversation\n\n"
+            f"Below are concatenated segment summaries of a single "
+            f"conversation. Your ONLY job is to produce:\n\n"
+            f"1. The standard frontmatter YAML block (title, uuid, "
+            f"created_at, last_active, project, categories, topics, "
+            f"keywords, significance) — opened and closed with `---`\n"
+            f"2. A short opening paragraph (2-4 sentences) situating the "
+            f"conversation — what it was about and what was at stake\n\n"
+            f"Output NOTHING else. Do not summarize, do not reproduce the "
+            f"segment content, do not add a Specifics section. Just the "
+            f"frontmatter block and the opening paragraph. The segment "
+            f"bodies will be appended mechanically after your output.\n\n"
             f"---\n\n"
-            f"# Segment summaries to stitch\n\n{concatenated}\n"
+            f"# Segment summaries (for context only — do not reproduce)\n\n"
+            f"{concatenated}\n"
         )
         try:
-            output = run_claude(
+            frontmatter_output = run_claude(
                 _instruction_file(),
-                stitch_input,
+                frontmatter_input,
                 model=model,
             )
         except ClaudeInvocationError as e:
-            print(f"  ✗ {uuid[:8]} — claude error on stitch pass: {e}", flush=True)
-            print(f"    (segments cached in {seg_cache_dir} — re-run to retry stitch)", flush=True)
+            print(f"  ✗ {uuid[:8]} — claude error on frontmatter pass: {e}", flush=True)
+            print(f"    (segments cached in {seg_cache_dir} — re-run to retry)", flush=True)
             return False
-        stitch_words = len(output.split())
-        print(f"    stitch done ({stitch_words:,} words)", flush=True)
+
+        # Combine: frontmatter + opening paragraph + concatenated segments.
+        # The frontmatter output should end with the opening paragraph.
+        # Strip any trailing whitespace, then append the segment bodies.
+        fm_text = frontmatter_output.strip()
+        output = fm_text + "\n\n" + concatenated
+        print(f"    done ({len(output.split()):,} words total)", flush=True)
 
         # Success — clean up segment cache.
         import shutil

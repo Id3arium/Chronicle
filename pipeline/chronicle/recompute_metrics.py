@@ -168,7 +168,12 @@ def _recompute_entries(state: dict[str, Any]) -> tuple[int, int]:
             total_orig, total_sum = _half_source_totals(state, rs, re_)
         else:
             children = e.get("children") or []
-            sm = [_child_source_metrics(state, ch) for ch in children]
+            # Resolve merged H1-H2 entries the same way synthesize does —
+            # if children says [2025_01_H1, 2025_01_H2] but only
+            # 2025_01_H1-H2 exists, use the merged entry.
+            from .synthesize import _resolve_children_with_merges
+            resolved = _resolve_children_with_merges(state, children)
+            sm = [_child_source_metrics(state, ch) for ch in resolved]
             total_orig = sum(int(s["original_words"]) for s in sm)
             total_sum = sum(int(s["summary_words"]) for s in sm)
 

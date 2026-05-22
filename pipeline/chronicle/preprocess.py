@@ -19,9 +19,10 @@ MAX_CHARS = MAX_TOKENS * CHARS_PER_TOKEN  # 480,000 chars
 
 # Output-side cap: `claude -p` headless mode appears to truncate single-call
 # outputs around ~2k words. For high-significance large conversations the
-# 7%-floor target exceeds that, so even when the input fits we want to chunk
-# anyway — each chunk produces partial output that gets stitched via the
-# sliding window, sidestepping the per-call output ceiling.
+# 10%-floor target exceeds that, so even when the input fits we want to chunk
+# anyway — each chunk produces a partial summary with context carried forward
+# from the previous segment, then all segments are mechanically concatenated
+# (no editing/stitch pass) to sidestep the per-call output ceiling.
 HIGH_SIG_FORCE_CHUNK_TOKENS = 30_000  # ~20k words of stripped conversation
 HIGH_SIG_CHUNK_CHARS = 150_000  # smaller chunks → more segments → more output room
 
@@ -89,7 +90,7 @@ def chunk_size_for(conv_text: str, *, significance: str | None = None) -> int:
     """Pick the chunk character budget.
 
     High-sig conversations always use the smaller chunk size (more segments
-    → more output room per segment → hits the 7% floor). Non-high-sig
+    → more output room per segment → hits the 10% floor). Non-high-sig
     oversized conversations use the full MAX_CHARS since they don't need
     extra output headroom.
     """

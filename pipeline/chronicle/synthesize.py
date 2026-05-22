@@ -676,6 +676,28 @@ def run(args: Any) -> None:
         if is_partial
         else ""
     )
+    # For half-tier entries, compute and pass a floor target so the model
+    # has a concrete word-count minimum (25% of total summary input).
+    # Higher tiers get no floor — their input is already determined.
+    if tier == "half":
+        total_summary_words = sum(
+            it.get("source_metrics", {}).get("summary_words", 0) for it in items
+        )
+        half_floor = max(int(total_summary_words * 0.25), 500)
+        metrics_target = (
+            f"# Entry metrics target\n\n"
+            f"total_source_summary_words: {total_summary_words:,}\n"
+            f"minimum_entry_words: {half_floor:,} (25% of source summaries)\n\n"
+            f"Before finishing, estimate your entry's word count. If it's below "
+            f"{half_floor:,} words, you've likely compressed away material that "
+            f"won't survive to the quarterly tier. Exception: if the input "
+            f"summaries were thin (few conversations, mostly low-sig), the "
+            f"floor doesn't apply — don't pad.\n\n"
+            f"---\n\n"
+        )
+    else:
+        metrics_target = ""
+
     input_text = (
         f"# Glossary (project/term reference — use when matching, leave verbatim otherwise)\n\n"
         f"{glossary_text}\n\n"
@@ -683,6 +705,7 @@ def run(args: Any) -> None:
         f"{partial_note}"
         f"# Period to synthesize\n\n"
         f"{args.period} — {tier} — {range_start} → {range_end}\n\n"
+        f"{metrics_target}"
         f"# Pending / delta context\n\n{pending_text or '(none)'}\n\n"
         f"---\n\n"
         f"# Inputs ({tier}: {len(items)} {'summary' if tier == 'half' else 'child entry'}{'ies' if len(items) != 1 else ''})\n\n"
@@ -690,11 +713,12 @@ def run(args: Any) -> None:
     )
 
     model = getattr(args, "model", None) or "claude-opus-4-7"
-    print(f"  Model: {model}")
+    print(f"  Model: {model} · effort: max (extended thinking)")
     try:
         output = run_claude(
             _instruction_file(), input_text,
             model=model,
+            effort="max",
         )
     except ClaudeInvocationError as e:
         print(f"claude error: {e}")

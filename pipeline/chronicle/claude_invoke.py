@@ -39,6 +39,7 @@ def run_claude(
     max_budget_usd: float | None = None,
     timeout_seconds: int = 600,
     model: str | None = None,
+    effort: str | None = None,
     max_retries: int = 3,
     retry_wait: int = 30,
 ) -> str:
@@ -78,6 +79,8 @@ def run_claude(
         cmd.extend(["--max-budget-usd", str(max_budget_usd)])
     if model:
         cmd.extend(["--model", model])
+    if effort:
+        cmd.extend(["--effort", effort])
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
 
     import time
