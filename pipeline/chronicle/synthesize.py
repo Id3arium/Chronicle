@@ -22,6 +22,7 @@ Rules:
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -250,7 +251,7 @@ def _build_entry_metrics(
     """Compute the 5 entry-level metrics from the source items + Claude's
     output. Returned dict is keyed for direct frontmatter injection.
 
-    `aggregate_source_compression_ratio` = total_summary / total_original.
+    `sources_compression_ratio` = total_summary / total_original.
     This weights by actual size — a true "how compressed is this whole
     pile" number. Averaging per-conversation ratios would weight each
     conversation equally regardless of size, which inflates the number
@@ -267,9 +268,9 @@ def _build_entry_metrics(
         round(entry_words / total_sum, 4) if total_sum else 0.0
     )
     return {
-        "total_source_conversation_words": total_orig,
-        "total_source_summary_words": total_sum,
-        "aggregate_source_compression_ratio": aggregate_ratio,
+        "sources_conversation_words": total_orig,
+        "sources_summary_words": total_sum,
+        "sources_compression_ratio": aggregate_ratio,
         "entry_words": entry_words,
         "entry_compression_ratio": entry_ratio,
     }
@@ -288,6 +289,28 @@ def _inject_entry_metrics(output: str, metrics: dict[str, Any]) -> str:
     return render_with_frontmatter(fields, body)
 
 
+_SUBHEADER_RE = re.compile(
+    r"^(\*\*\d+\s+conversations(?:/inputs)?)(?:\s+·.*?)?\*\*",
+    re.MULTILINE,
+)
+
+
+def _enrich_subheader(output: str, entry_metrics: dict[str, Any]) -> str:
+    """Append word count and compression ratio to the bold subheader line.
+
+    Matches ``**N conversations**`` and rewrites to
+    ``**N conversations · X,XXX words · 0.XXXX ratio**``.
+    """
+    ew = entry_metrics.get("entry_words", 0)
+    er = entry_metrics.get("entry_compression_ratio", 0)
+    suffix = f" · {ew:,} words · {er:.4f} ratio"
+
+    def _replace(m: re.Match) -> str:
+        return f"{m.group(1)}{suffix}**"
+
+    return _SUBHEADER_RE.sub(_replace, output, count=1)
+
+
 def _write_empty_stub(args: Any, tier: str, range_start: str, range_end: str,
                       state: dict[str, Any]) -> None:
     """Write a minimal stub entry for a period with zero conversations.
@@ -300,7 +323,7 @@ def _write_empty_stub(args: Any, tier: str, range_start: str, range_end: str,
 
     body = (
         f"# {args.period} Entry\n"
-        f"**{range_start} – {range_end} · 0 conversations · {tier}**\n\n"
+        f"**0 conversations**\n\n"
         f"---\n\n"
         f"*No conversations in this period.*\n\n"
         f"---\n"
@@ -315,9 +338,9 @@ def _write_empty_stub(args: Any, tier: str, range_start: str, range_end: str,
         "model": "none",
         "input_count": 0,
         "headline": "No Activity",
-        "total_source_conversation_words": 0,
-        "total_source_summary_words": 0,
-        "aggregate_source_compression_ratio": 0,
+        "sources_conversation_words": 0,
+        "sources_summary_words": 0,
+        "sources_compression_ratio": 0,
         "entry_words": len(body.split()),
         "entry_compression_ratio": 0,
     }
@@ -338,9 +361,9 @@ def _write_empty_stub(args: Any, tier: str, range_start: str, range_end: str,
         "is_partial": False,
         "model": "none",
         "headline": "No Activity",
-        "total_source_conversation_words": 0,
-        "total_source_summary_words": 0,
-        "aggregate_source_compression_ratio": 0,
+        "sources_conversation_words": 0,
+        "sources_summary_words": 0,
+        "sources_compression_ratio": 0,
         "entry_words": len(body.split()),
         "entry_compression_ratio": 0,
     }
@@ -388,7 +411,7 @@ def _gather_half_inputs(
             cr = _to_float(fm.get("compression_ratio"))
         items.append(
             {
-                "heading": f"## {c.get('title') or '(untitled)'} — {uuid}",
+                "heading": f"## {c.get('title') or '(untitled)'} — [[{Path(sum_rel).stem}]]",
                 "body": text,
                 "file_rel": sum_rel,
                 "chars": len(text),
@@ -493,7 +516,7 @@ def _gather_rollup_inputs(
                     #   summary_words  = the child entry's own word count
                     #                    (it IS this tier's "summary" input)
                     #   compression_ratio = the child's own entry compression
-                    "original_words": _to_int(fm.get("total_source_conversation_words")) or 0,
+                    "original_words": _to_int(fm.get("sources_conversation_words") or fm.get("total_source_conversation_words")) or 0,
                     "summary_words": _to_int(fm.get("entry_words")) or 0,
                     "compression_ratio": _to_float(fm.get("entry_compression_ratio")) or 0.0,
                 },
@@ -686,7 +709,7 @@ def run(args: Any) -> None:
         half_floor = max(int(total_summary_words * 0.25), 500)
         metrics_target = (
             f"# Entry metrics target\n\n"
-            f"total_source_summary_words: {total_summary_words:,}\n"
+            f"sources_summary_words: {total_summary_words:,}\n"
             f"minimum_entry_words: {half_floor:,} (25% of source summaries)\n\n"
             f"Before finishing, estimate your entry's word count. If it's below "
             f"{half_floor:,} words, you've likely compressed away material that "
@@ -741,6 +764,13 @@ def run(args: Any) -> None:
     child_names = [it["file_rel"] for it in items]
     output = set_sources(output, child_names)
 
+    # Fix any inline wikilinks where the model wrote a bare UUID instead
+    # of the full slug. Runs after set_sources so the Sources section's
+    # links (which are already correct) aren't touched — they use stems
+    # with underscores, not bare hex UUIDs.
+    from .links import fix_inline_links
+    output = fix_inline_links(output, state)
+
     # Compute and inject the frontmatter BEFORE writing. Two groups:
     # - identity/period metadata (period, tier, range, created_at, input count)
     # - length metrics (the 5 word/ratio fields)
@@ -763,6 +793,12 @@ def run(args: Any) -> None:
     if headline:
         identity["headline"] = headline
     output = _inject_entry_metrics(output, {**identity, **entry_metrics})
+
+    # Enrich the subheader (the bold line under # ... Entry) with word
+    # count and compression ratio. The model writes "**N conversations**";
+    # we append " · X,XXX words · 0.XXXX ratio" so the reader sees the
+    # key stats at a glance without opening frontmatter.
+    output = _enrich_subheader(output, entry_metrics)
 
     out_path = entries_dir() / entry_filepath(args.period, headline)
     out_path.parent.mkdir(parents=True, exist_ok=True)

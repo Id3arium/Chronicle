@@ -204,17 +204,23 @@ def _scan_entries(ent_dir: Path) -> dict[str, dict[str, Any]]:
             "model": fm.get("model"),
         }
         # Optional metrics that may be in frontmatter.
-        for key in (
+        # Legacy → current name fallbacks for entries written before rename.
+        _METRIC_KEYS = (
             "tier",
             "input_count",
-            "total_source_conversation_words",
-            "total_source_summary_words",
-            "aggregate_source_compression_ratio",
+            "sources_conversation_words",
+            "sources_summary_words",
+            "sources_compression_ratio",
             "entry_compression_ratio",
-        ):
-            if fm.get(key):
-                # Try numeric conversion for numeric fields.
-                val = fm[key]
+        )
+        _LEGACY_MAP = {
+            "sources_conversation_words": "total_source_conversation_words",
+            "sources_summary_words": "total_source_summary_words",
+            "sources_compression_ratio": "aggregate_source_compression_ratio",
+        }
+        for key in _METRIC_KEYS:
+            val = fm.get(key) or fm.get(_LEGACY_MAP.get(key, ""))
+            if val:
                 try:
                     val = int(val)
                 except ValueError:

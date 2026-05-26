@@ -23,7 +23,9 @@ and self-heals on re-synthesis. See `set_parent_link`.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
+from typing import Any
 
 from .metrics import render_with_frontmatter, split_frontmatter
 
@@ -114,3 +116,90 @@ def set_sources(text: str, child_md_names: list[str]) -> str:
     return set_down_section(
         text, _SOURCES_HEADING, [wikilink_md(n) for n in child_md_names]
     )
+
+
+# ---------------------------------------------------------------------------
+# Inline link fixer — resolves short-UUID wikilinks to full slugs
+# ---------------------------------------------------------------------------
+
+# Matches [[target]] or [[target|alias]] where target looks like a bare
+# 8-char hex UUID (not already a full slug with underscores/hyphens before it).
+_WIKILINK_RE = re.compile(r"\[\[([^\]|]+?)(?:\|([^\]]+?))?\]\]")
+
+# A "short UUID" is 8+ hex chars with no underscores or path separators —
+# i.e. the model wrote just the UUID portion, not the full slug.
+_SHORT_UUID_RE = re.compile(r"^[0-9a-f]{8,}$", re.IGNORECASE)
+
+
+def _build_uuid_to_slug(state: dict[str, Any]) -> dict[str, str]:
+    """Build a lookup from UUID (or UUID prefix) → full slug stem.
+
+    Handles both full UUIDs (keys in state["conversations"]) and the
+    short 8-char suffixes that appear in slug filenames.
+    """
+    mapping: dict[str, str] = {}
+    for uuid, conv in state.get("conversations", {}).items():
+        sf = conv.get("summary_file")
+        if not sf:
+            continue
+        slug = Path(sf).stem  # e.g. "16_hermes-jun-15-stock-split__bf3c3bbf"
+        # Map both the full UUID and the short suffix (last 8 chars).
+        mapping[uuid] = slug
+        short = uuid.replace("-", "")[:8]
+        # Only set if not already claimed (first wins on collision, unlikely).
+        mapping.setdefault(short, slug)
+        # Also map the last segment after the last hyphen in the UUID.
+        tail = uuid.rsplit("-", 1)[-1]
+        mapping.setdefault(tail, slug)
+    return mapping
+
+
+def fix_inline_links(text: str, state: dict[str, Any]) -> str:
+    """Replace short-UUID wikilinks with full-slug versions.
+
+    Scans ``text`` for ``[[<target>]]`` or ``[[<target>|<alias>]]`` where
+    ``<target>`` matches the short-UUID pattern. Looks the UUID up in
+    ``state["conversations"]`` and rewrites it to the full slug stem.
+
+    Returns the (possibly modified) text and prints warnings for any
+    unresolvable short-UUID links.
+    """
+    uuid_to_slug = _build_uuid_to_slug(state)
+    unresolved: list[str] = []
+
+    def _replace(m: re.Match) -> str:
+        target = m.group(1).strip()
+        alias = m.group(2)
+
+        if not _SHORT_UUID_RE.match(target):
+            # Already a full slug or some other valid link — leave it alone.
+            return m.group(0)
+
+        slug = uuid_to_slug.get(target.lower())
+        if slug is None:
+            unresolved.append(target)
+            return m.group(0)
+
+        if alias:
+            return f"[[{slug}|{alias}]]"
+        return f"[[{slug}]]"
+
+    result = _WIKILINK_RE.sub(_replace, text)
+
+    if unresolved:
+        print(f"  ⚠  {len(unresolved)} unresolved short-UUID link(s):")
+        for u in unresolved:
+            print(f"      [[{u}]]")
+
+    fixed = len(_SHORT_UUID_RE.findall(text)) - len(unresolved)
+    # Only report if we actually changed something.
+    changed = result != text
+    if changed:
+        # Count how many were fixed by diffing
+        orig_short = [m for m in _WIKILINK_RE.finditer(text) if _SHORT_UUID_RE.match(m.group(1).strip())]
+        new_short = [m for m in _WIKILINK_RE.finditer(result) if _SHORT_UUID_RE.match(m.group(1).strip())]
+        n_fixed = len(orig_short) - len(new_short)
+        if n_fixed > 0:
+            print(f"  ✓  Fixed {n_fixed} short-UUID link(s) → full slugs")
+
+    return result

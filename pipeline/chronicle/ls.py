@@ -56,7 +56,7 @@ def _run_entries(args: Any) -> None:
         tree.setdefault(year, {}).setdefault(q_key, []).append((label, rec))
 
     def _fmt_row(label: str, rec: dict, indent: str) -> str:
-        orig = rec.get("total_source_conversation_words") or 0
+        orig = rec.get("sources_conversation_words") or rec.get("total_source_conversation_words") or 0
         entry_w = rec.get("entry_words") or 0
         ratio = rec.get("entry_compression_ratio")
         hl = rec.get("headline", "")

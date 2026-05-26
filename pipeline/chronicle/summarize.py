@@ -127,6 +127,37 @@ def _inject_metrics(
     return render_with_frontmatter(ordered, body)
 
 
+import re as _re
+
+_SUMMARY_SUBHEADER_RE = _re.compile(
+    r"^\*\*\d[\d,]+ words → \d[\d,]+ words · [\d.]+ ratio\*\*\n*",
+    _re.MULTILINE,
+)
+
+
+def _inject_summary_subheader(
+    output: str, orig_words: int, summary_words: int, ratio: float
+) -> str:
+    """Insert/replace a stats line as the first body line of a summary.
+
+    Format: **X,XXX words → YYY words · 0.XXXX ratio**
+
+    Idempotent: strips any existing stats line before inserting.
+    """
+    from .metrics import render_with_frontmatter, split_frontmatter
+
+    fields, body = split_frontmatter(output)
+    # Remove any existing stats line (idempotent).
+    body = _SUMMARY_SUBHEADER_RE.sub("", body, count=1)
+    # Strip leading blank lines so we don't get double-spacing.
+    body = body.lstrip("\n")
+    stats = f"**{orig_words:,} words → {summary_words:,} words · {ratio:.4f} ratio**"
+    new_body = f"{stats}\n\n{body}"
+    if fields:
+        return render_with_frontmatter(fields, new_body)
+    return new_body
+
+
 def _read_pending_context() -> str:
     p = pending_file()
     if p.exists():
@@ -609,6 +640,9 @@ def summarize_one(
         "updated_at": conv_meta.get("updated_at"),
         "project_name": conv_meta.get("project_name"),
     })
+    # Inject a stats subheader as the first body line so the reader sees
+    # key numbers at a glance without opening frontmatter.
+    output = _inject_summary_subheader(output, orig_words, summary_metrics["words"], ratio)
     # Atomic write: never leave a half-finished summary on disk if something
     # crashes between bytes. Write to a sibling .tmp and rename on success.
     tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")

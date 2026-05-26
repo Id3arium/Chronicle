@@ -33,13 +33,13 @@ the "Period to synthesize" header. Match your granularity to the tier:
 - Half-month: detail-level. Specific conversations, specific artifacts,
   the texture of about two weeks. This is where concrete details land.
   Half-month entries have a soft floor: aim for at least 25% of the
-  total source summary word count, and a soft ceiling around 35%.
-  Halves are the last tier where conversation material can enter the
-  permanent record — if a half compresses too aggressively, load-bearing
-  material is lost before reaching the quarterly. The exact floor number
-  is computed and passed in the input header. If the summaries were thin
-  (few conversations, mostly low-significance), the floor doesn't
-  apply — don't pad.
+  total source summary word count. Halves are the last tier where
+  conversation material can enter the permanent record — if a half
+  compresses too aggressively, load-bearing material is lost before
+  reaching the quarterly. The exact floor number is computed and passed
+  in the input header. If the summaries were thin (few conversations,
+  mostly low-significance), the floor doesn't apply — don't pad.
+  When in doubt about length, cut — see the cutting guidance below.
 - Quarterly: six halves (two per month, three months). What did the
   quarter look like in retrospect? What started, what ended, what held?
   Target ratio: 20–30% of source half-entry words.
@@ -50,6 +50,31 @@ the "Period to synthesize" header. Match your granularity to the tier:
 
 Never re-list every conversation at the quarter or year tier. That's what
 the half entries are for. Upper tiers compress and connect.
+
+WHAT TO CUT (in priority order, cut first from top):
+
+1. Implementation details — function signatures, variable names, API
+   endpoints, file structures, cache patterns, debugging steps, CLI
+   flags. These live in the codebase, not in Alejandro's memory. The
+   code is its own record.
+2. Conversational scaffolding — back-and-forth that led to a conclusion
+   but isn't the conclusion itself.
+3. Redundancy across conversations — the same idea stated three times
+   in three conversations becomes one statement.
+4. Low-significance lookups — one-shot questions with textbook answers.
+
+WHAT TO KEEP from technical/coding work:
+
+- Decisions and *why* (chose X over Y because Z).
+- Frameworks and mental models that transcend the specific code
+  (e.g., "functions should describe what they do, not pass judgment";
+  "filenames should reflect reality, not the request that produced
+  them").
+- The *existence* and *purpose* of a project, its current state, and
+  what's unresolved — not how it's implemented.
+- Design insights that are genuinely about the problem domain, not
+  about the language or tool (e.g., the cost-basis-absorbs-losses
+  accounting insight is about finance, not about Python).
 
 =====================================================================
 INPUT
@@ -115,22 +140,39 @@ Structure (all tiers use the same shape; depth scales with tier):
 ---
 
 # [Period label] Entry
-**[Start date] – [End date] · [N conversations/inputs] · [tier]**
+**[N] conversations**
 
 ---
 
-## The Record
-
-### What had your attention
+## What had your attention
 
 Open with 2–4 sentences of narrative context: mood, arc, conditions —
 who Alejandro was during this period, grounded in specifics. Not a list
 of projects. Honest, specific, no softening.
 
 Then group the period's content into themes, descending by weight. For
-each: name the theme, and cover what was actually explored/decided/built
-with a parenthesized count (conversations at half-month; contributing
-halves at higher tiers).
+each: name the theme, and cover what was actually explored/decided/built.
+Cite source conversations inline as wikilinks after the theme name:
+
+**Theme name** ([[slug_1]], [[slug_2]])
+
+The slugs are the source filenames (without .md) provided in the inputs.
+At higher tiers, cite child entries (halves in a quarter, quarters in a
+year) — and pull through key conversation slugs from children when a
+specific conversation is load-bearing at the higher tier.
+
+Additionally, use aliased wikilinks inline throughout the entry —
+Wikipedia-style. When you mention a concept, framework, or project that
+is traceable to a specific source conversation, embed the link:
+
+  The [[28_seeking-wise-counsel__ca8127b3|mind-virus antidote framework]]
+  requires its host to hold a contradiction...
+
+The alias makes the link read as natural text while remaining clickable.
+Link every mention, not just the first — the reader may land anywhere
+in the entry and should always be one click from the source. Keep
+aliases short and natural (use the concept's name or a brief descriptor,
+not the slug).
 
 CRITICAL — explain, don't name-drop: when a framework, concept, coinage,
 or mental model appears in the narrative, explain it at *recovery depth*
@@ -159,12 +201,26 @@ sentence. A load-bearing framework gets a full paragraph with the core
 distinction and an example. Scale with how much there is to actually
 explain. Don't pad simple things; don't compress complex ones.
 
-### What you believed
+## Quotes
 
-Bulleted list of positions and convictions that were active this period.
-Pull from the Positions/Specifics of the input material — not restated
-generically. Each bullet should be specific enough that reading it a
-year later recovers something precise about how Alejandro was thinking.
+The quotable, at-a-glance version of this period's convictions. Each
+bullet is one sentence: a position stated sharply enough to be
+memorable.
+
+Do NOT re-explain concepts already covered in "What had your attention."
+If a concept was fully unpacked above, state it here as a one-liner that
+references it by name. The reader has already read the explanation; this
+section is for fast retrieval and scanning, not for comprehension.
+
+Good: "Contradictions only exist in models, not in reality."
+Good: "The options market is a planetary supercomputer — harness it,
+don't outguess it."
+Good: "Forgiveness isn't owed. Anger fades when it stops serving a
+function."
+
+Bad: "The mind-virus antidote framework shows that every ideology
+sustains itself by requiring its host to hold a contradiction..." (This
+re-explains. The explanation belongs in the section above.)
 
 ---
 
@@ -191,34 +247,30 @@ Sort by Count descending.
 
 ---
 
-## Reflections
+## From Claude
 
-### From Claude
+Focus on what the entry *doesn't* already say. Three jobs:
 
-Two jobs, both mandatory:
+1. **Connections**: what threads connect across conversations that
+   Alejandro didn't explicitly link? What's the same idea appearing in
+   different domains? What arc is forming that isn't named yet?
 
-1. Analytical: what does the pattern of attention actually reveal? What's
-   being systematically undercounted or overcounted? What thread deserves
-   attention that isn't getting it? Apply a Pareto lens: for each
-   significant project, how fast was the signal found? Were bad ideas
-   dropped quickly or held too long? Were good ones recognized or
-   underweighted?
+2. **Questions not asked**: what's the obvious next question that wasn't
+   pursued? What assumption went unexamined? Where did a conversation
+   stop short of the interesting part? What would you ask if you were
+   in the room?
 
-2. Intellectual engagement: go beyond the pattern. Read the positions and
-   reasoning; form a view. Where is the reasoning strong? Where weak, and
-   how specifically? Where is something genuinely interesting? Where does
-   a belief look like motivated reasoning? Have a position on the ideas
-   themselves, not just the attention around them.
+3. **Blind spots and tensions**: where does a position contradict another
+   position held simultaneously? Where does the pattern of attention
+   reveal something being avoided? Where does reasoning look motivated?
 
-Be direct. No congratulation, no hedging. Name problems as problems.
+Do NOT restate or re-explain ideas from the earlier sections. Refer to
+concepts by name and go straight to analysis. Do NOT celebrate or
+validate ideas — if something is genuinely strong, say *why it's strong
+and where it breaks*, not just that it's good. Every sentence must add
+something the earlier sections don't contain.
+
 Length proportional to how much there is to say.
-
-### Your reflection (delta)
-
-*What is one thing that is different about how you think now versus the
-start of this period?*
-
-*(For Alejandro to fill in. Leave blank.)*
 
 ---
 *Entry closed: [End date]*

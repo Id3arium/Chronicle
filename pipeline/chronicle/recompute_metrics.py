@@ -5,7 +5,7 @@ Metrics are written once at generation time (summarize/synthesize) into
 both the file frontmatter and the state record. If you hand-edit a summary
 or entry afterward — fix a typo, cut a paragraph — the recorded
 word/char/ratio numbers no longer match the file, and the lie propagates
-upward: a half entry's `total_source_summary_words` is summed from child
+upward: a half entry's `sources_summary_words` is summed from child
 summaries' state, a quarter's totals are summed from its halves' frontmatter.
 
 This recomputes everything bottom-up so the cascade settles in one pass:
@@ -82,14 +82,23 @@ def _recompute_summaries(state: dict[str, Any]) -> tuple[int, int]:
         # feedback loop that never converges (0.3958 → 0.396 → …). The body
         # is the stable, self-consistent unit and is also the apples-to-
         # apples prose count against the original.
-        m = measure_text(body)
+        # Also strip the stats subheader before measuring — it's metadata,
+        # not prose, and including it would create the same feedback loop.
+        from .summarize import _SUMMARY_SUBHEADER_RE, _inject_summary_subheader
+        body_clean = _SUMMARY_SUBHEADER_RE.sub("", body, count=1).lstrip("\n")
+        m = measure_text(body_clean)
         orig_chars = c.get("original_chars") or 0
+        orig_words = c.get("original_words") or 0
         ratio = compression_ratio(m["chars"], orig_chars)
 
         new_fields = dict(fields)
         new_fields["summary_words"] = m["words"]
         new_fields["compression_ratio"] = ratio
-        if _rewrite_if_changed(c["summary_file"], new_fields, body):
+        # Re-inject the stats subheader with corrected values.
+        final_body = _SUMMARY_SUBHEADER_RE.sub("", body, count=1).lstrip("\n")
+        stats = f"**{orig_words:,} words → {m['words']:,} words · {ratio:.4f} ratio**"
+        final_body = f"{stats}\n\n{final_body}"
+        if _rewrite_if_changed(c["summary_file"], new_fields, final_body):
             files += 1
 
         before = (
@@ -115,7 +124,7 @@ def _child_source_metrics(state: dict[str, Any], child_label: str) -> dict[str, 
     child's own entry ratio. Read from the child's (now-corrected) state."""
     e = state["entries"].get(child_label, {})
     return {
-        "original_words": e.get("total_source_conversation_words", 0) or 0,
+        "original_words": e.get("sources_conversation_words") or e.get("total_source_conversation_words", 0) or 0,
         "summary_words": e.get("entry_words", 0) or 0,
         "compression_ratio": e.get("entry_compression_ratio", 0.0) or 0.0,
     }
@@ -181,16 +190,19 @@ def _recompute_entries(state: dict[str, Any]) -> tuple[int, int]:
         aggregate_ratio = round(total_sum / total_orig, 4) if total_orig else 0.0
         entry_ratio = round(entry_words / total_sum, 4) if total_sum else 0.0
         metrics = {
-            "total_source_conversation_words": total_orig,
-            "total_source_summary_words": total_sum,
-            "aggregate_source_compression_ratio": aggregate_ratio,
+            "sources_conversation_words": total_orig,
+            "sources_summary_words": total_sum,
+            "sources_compression_ratio": aggregate_ratio,
             "entry_words": entry_words,
             "entry_compression_ratio": entry_ratio,
         }
 
         new_fields = dict(fields)
         new_fields.update(metrics)
-        if _rewrite_if_changed(entry_file, new_fields, body):
+        # Keep the subheader's word/ratio stats in sync with the metrics.
+        from .synthesize import _enrich_subheader
+        enriched_body = _enrich_subheader(body, metrics)
+        if _rewrite_if_changed(entry_file, new_fields, enriched_body):
             files += 1
 
         before = {k: e.get(k) for k in metrics}
