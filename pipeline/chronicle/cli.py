@@ -86,6 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Period label. Examples: 2026_Apr_H1, 2026_Apr_H2, 2026_Apr_H1-H2, 2026_Apr, 2026_Q2, 2026.",
     )
     p_syn.add_argument("-m", "--model", default="claude-opus-4-7", help="Model ID passed to `claude --model` and recorded in frontmatter for provenance (default: claude-opus-4-7 — synthesis is the interpretive tier, worth the cost). Pin an explicit ID so provenance is exact.")
+    p_syn.add_argument("-e", "--effort", default="max", choices=["high", "max"], help="Extended thinking effort level (default: max).")
     p_syn.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompts (period not yet ended, stale summaries).")
     p_syn.set_defaults(func=_synthesize_cmd)
 

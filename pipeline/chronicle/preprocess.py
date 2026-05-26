@@ -11,20 +11,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-# Roughly 4 chars per token. 120k token budget leaves room for the
-# instruction prompt (~2-3k tokens) and output.
+# Roughly 4 chars per token. 160k token budget in a 200k context window
+# leaves ~40k tokens for the instruction prompt (~3k) and output (~37k).
+# The model's actual output tends to cap around ~2k words (~2.5k tokens)
+# regardless of available budget, so the headroom is more than sufficient.
 CHARS_PER_TOKEN = 4
-MAX_TOKENS = 120_000
-MAX_CHARS = MAX_TOKENS * CHARS_PER_TOKEN  # 480,000 chars
-
-# Output-side cap: `claude -p` headless mode appears to truncate single-call
-# outputs around ~2k words. For high-significance large conversations the
-# 10%-floor target exceeds that, so even when the input fits we want to chunk
-# anyway — each chunk produces a partial summary with context carried forward
-# from the previous segment, then all segments are mechanically concatenated
-# (no editing/stitch pass) to sidestep the per-call output ceiling.
-HIGH_SIG_FORCE_CHUNK_TOKENS = 30_000  # ~20k words of stripped conversation
-HIGH_SIG_CHUNK_CHARS = 150_000  # smaller chunks → more segments → more output room
+MAX_TOKENS = 160_000
+MAX_CHARS = MAX_TOKENS * CHARS_PER_TOKEN  # 640,000 chars
 
 
 def strip_conversation(conv_json: str) -> str:
@@ -70,33 +63,13 @@ def estimate_tokens(text: str) -> int:
 
 
 def needs_chunking(conv_text: str, *, significance: str | None = None) -> bool:
-    """True if this conversation should be processed via sliding window.
+    """True if this conversation exceeds the per-call context budget.
 
-    Two triggers:
-    1. Input exceeds the per-call token budget (always chunk).
-    2. High-significance conversations above ~30k tokens — even though the
-       input would fit, the output ceiling on `claude -p` truncates the
-       summary mid-list. Chunking spreads output across multiple passes.
+    Only chunks when the input literally doesn't fit. The model's output
+    length (~1-2k words) is well under the available output token budget
+    regardless of input size, so there's no output-side reason to chunk.
     """
-    tokens = estimate_tokens(conv_text)
-    if tokens > MAX_TOKENS:
-        return True
-    if significance == "high" and tokens > HIGH_SIG_FORCE_CHUNK_TOKENS:
-        return True
-    return False
-
-
-def chunk_size_for(conv_text: str, *, significance: str | None = None) -> int:
-    """Pick the chunk character budget.
-
-    High-sig conversations always use the smaller chunk size (more segments
-    → more output room per segment → hits the 10% floor). Non-high-sig
-    oversized conversations use the full MAX_CHARS since they don't need
-    extra output headroom.
-    """
-    if significance == "high":
-        return HIGH_SIG_CHUNK_CHARS
-    return MAX_CHARS
+    return estimate_tokens(conv_text) > MAX_TOKENS
 
 
 def chunk_messages(conv_json: str, max_chars: int = MAX_CHARS) -> list[str]:

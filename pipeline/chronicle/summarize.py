@@ -244,8 +244,8 @@ def summarize_one(
         return False
 
     from .preprocess import (
+        MAX_CHARS,
         chunk_messages,
-        chunk_size_for,
         estimate_tokens,
         needs_chunking,
         strip_conversation,
@@ -432,17 +432,11 @@ def summarize_one(
         # A lightweight final call generates only frontmatter + opening
         # paragraph from the concatenated segments. This is narrow enough
         # that the model doesn't treat it as a summarization opportunity.
-        max_chars = chunk_size_for(conv_text, significance=significance)
-        chunks = chunk_messages(conv_text, max_chars=max_chars)
+        chunks = chunk_messages(conv_text, max_chars=MAX_CHARS)
         n_chunks = len(chunks)
         est_tokens = estimate_tokens(conv_text)
-        reason = (
-            "high-sig + large (forcing chunking to bypass output ceiling)"
-            if significance == "high" and est_tokens <= 120_000
-            else "oversized input"
-        )
         print(
-            f"    ({reason}: ~{est_tokens:,} tokens after stripping → "
+            f"    (oversized: ~{est_tokens:,} tokens after stripping → "
             f"{n_chunks} chunks, sliding window)",
             flush=True,
         )
@@ -562,7 +556,7 @@ def summarize_one(
             frontmatter_output = run_claude(
                 _instruction_file(),
                 frontmatter_input,
-                model=model,
+                model="haiku",
             )
         except ClaudeInvocationError as e:
             print(f"  ✗ {uuid[:8]} — claude error on frontmatter pass: {e}", flush=True)

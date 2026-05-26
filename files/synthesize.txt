@@ -33,15 +33,20 @@ the "Period to synthesize" header. Match your granularity to the tier:
 - Half-month: detail-level. Specific conversations, specific artifacts,
   the texture of about two weeks. This is where concrete details land.
   Half-month entries have a soft floor: aim for at least 25% of the
-  total source summary word count. Halves are the last tier where
-  conversation material can enter the permanent record — if a half
-  compresses too aggressively, load-bearing material is lost before
-  reaching the quarterly. The exact floor number is computed and passed
-  in the input header. If the summaries were thin (few conversations,
-  mostly low-significance), the floor doesn't apply — don't pad.
+  total source summary word count, and a soft ceiling around 35%.
+  Halves are the last tier where conversation material can enter the
+  permanent record — if a half compresses too aggressively, load-bearing
+  material is lost before reaching the quarterly. The exact floor number
+  is computed and passed in the input header. If the summaries were thin
+  (few conversations, mostly low-significance), the floor doesn't
+  apply — don't pad.
 - Quarterly: six halves (two per month, three months). What did the
   quarter look like in retrospect? What started, what ended, what held?
-- Yearly: four quarters. The character of the year.
+  Target ratio: 20–30% of source half-entry words.
+- Yearly: four quarters. The character of the year. This is the most
+  interpretive tier — 40–50% of source quarter-entry words is
+  appropriate. The yearly earns its length through connections and arcs
+  that only become visible across four quarters.
 
 Never re-list every conversation at the quarter or year tier. That's what
 the half entries are for. Upper tiers compress and connect.
@@ -116,28 +121,50 @@ Structure (all tiers use the same shape; depth scales with tier):
 
 ## The Record
 
-### Who you were
-
-Narrative prose. Who was Alejandro during this period? What was the
-dominant mood, condition, arc? Grounded in the specifics of what actually
-happened — not a list of projects. Length proportional to how much
-actually happened — a quiet period is short, a dense one is long.
-Honest, specific, no softening. See the voice guidance below.
-
 ### What had your attention
 
-Group the period's content into themes, descending by weight. For each:
-name the theme, 2–4 sentences on what was actually explored/decided/built
-(not what it was "about"), and a parenthesized count (conversations at
-half-month; contributing halves at higher tiers).
+Open with 2–4 sentences of narrative context: mood, arc, conditions —
+who Alejandro was during this period, grounded in specifics. Not a list
+of projects. Honest, specific, no softening.
+
+Then group the period's content into themes, descending by weight. For
+each: name the theme, and cover what was actually explored/decided/built
+with a parenthesized count (conversations at half-month; contributing
+halves at higher tiers).
+
+CRITICAL — explain, don't name-drop: when a framework, concept, coinage,
+or mental model appears in the narrative, explain it at *recovery depth*
+— well enough that a stranger who has never seen the source material
+(including a future Alejandro who has forgotten it) can understand the
+actual mechanism, not just recognize the label. This is the single most
+important quality of the entry.
+
+Bad: "You built the mind-virus antidote framework — a way to defeat
+ideological capture by eliminating contradictions."
+(Name-drop. A year from now this recovers nothing.)
+
+Good: "You built the mind-virus antidote framework: every ideology
+sustains itself by requiring its host to hold a contradiction they can't
+examine without threatening their identity (e.g., 'free speech
+absolutism' while algorithmically boosting one viewpoint). The antidote
+is not counter-argument but asking 'where is the contradiction?' —
+contradictions only exist in models, not in reality. Evolution is the
+universe's truth-finding algorithm: organisms with contradictory models
+get selected against because a wrong model eventually meets a situation
+where it kills you."
+(Recoverable. The mechanism is here, not just the name.)
+
+Not every concept needs this depth. A simple tool or technique gets one
+sentence. A load-bearing framework gets a full paragraph with the core
+distinction and an example. Scale with how much there is to actually
+explain. Don't pad simple things; don't compress complex ones.
 
 ### What you believed
 
-Bulleted list of positions, frameworks, and convictions that were active
-this period. Pull from the Positions/Specifics of the input material —
-not restated generically. Each bullet should be specific enough that
-reading it a year later recovers something precise about how Alejandro
-was thinking.
+Bulleted list of positions and convictions that were active this period.
+Pull from the Positions/Specifics of the input material — not restated
+generically. Each bullet should be specific enough that reading it a
+year later recovers something precise about how Alejandro was thinking.
 
 ---
 

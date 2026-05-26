@@ -713,12 +713,13 @@ def run(args: Any) -> None:
     )
 
     model = getattr(args, "model", None) or "claude-opus-4-7"
-    print(f"  Model: {model} · effort: max (extended thinking)")
+    effort = getattr(args, "effort", None) or "max"
+    print(f"  Model: {model} · effort: {effort} (extended thinking)")
     try:
         output = run_claude(
             _instruction_file(), input_text,
             model=model,
-            effort="max",
+            effort=effort,
         )
     except ClaudeInvocationError as e:
         print(f"claude error: {e}")
@@ -751,7 +752,7 @@ def run(args: Any) -> None:
         "range_start": range_start,
         "range_end": range_end,
         "synthesized_at": now_iso(),
-        "model": model,
+        "model": f"{model} ({effort})",
         "input_count": len(items),
     }
     if is_partial:
@@ -785,7 +786,7 @@ def run(args: Any) -> None:
         "range_end": range_end,
         "entry_chars": len(output),
         "is_partial": is_partial,
-        "model": model,
+        "model": f"{model} ({effort})",
         **entry_metrics,
     }
     if tier != "half":
