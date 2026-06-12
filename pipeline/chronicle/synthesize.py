@@ -290,20 +290,21 @@ def _inject_entry_metrics(output: str, metrics: dict[str, Any]) -> str:
 
 
 _SUBHEADER_RE = re.compile(
-    r"^(\*\*\d+\s+conversations(?:/inputs)?)(?:\s+·.*?)?\*\*",
+    r"^(\*\*\d+\s+(?:conversations?|halves|half-entries|half-month\s+inputs|quarters|inputs)(?:\s*/\s*\d+\s+conversations)?)(?:\s+·.*?)?\*\*",
     re.MULTILINE,
 )
 
 
 def _enrich_subheader(output: str, entry_metrics: dict[str, Any]) -> str:
-    """Append word count and compression ratio to the bold subheader line.
+    """Append source→entry word count and compression ratio to the bold subheader.
 
     Matches ``**N conversations**`` and rewrites to
-    ``**N conversations · X,XXX words · 0.XXXX ratio**``.
+    ``**N conversations · X,XXX words → Y,YYY words · 0.XXXX ratio**``.
     """
+    sw = entry_metrics.get("sources_summary_words", 0)
     ew = entry_metrics.get("entry_words", 0)
     er = entry_metrics.get("entry_compression_ratio", 0)
-    suffix = f" · {ew:,} words · {er:.4f} ratio"
+    suffix = f" · {sw:,} words → {ew:,} words · {er:.4f} ratio"
 
     def _replace(m: re.Match) -> str:
         return f"{m.group(1)}{suffix}**"
@@ -526,9 +527,151 @@ def _gather_rollup_inputs(
     return items, missing, total_chars
 
 
-# ────────────────── main entry ──────────────────
+# ────────────────── batch discovery (no --period) ──────────────────
+
+def _all_candidate_periods(state: dict[str, Any]) -> list[str]:
+    """Every half / quarter / year label spanning the conversation history,
+    in bottom-up tier order: all halves first, then quarters, then years.
+
+    Halves use the canonical per-month form (YYYY_MM_H1 / _H2). The sparse-
+    month auto-merge is applied later, per-period, by _resolve_half_label —
+    so we always enumerate both halves and let that layer collapse them.
+    """
+    from datetime import date as _date
+
+    convs = [
+        c for c in state["conversations"].values() if not c.get("deleted_at")
+    ]
+    dates = [(c.get("created_at") or "")[:10] for c in convs]
+    dates = [d for d in dates if d]
+    if not dates:
+        return []
+    first = _date.fromisoformat(min(dates))
+    last = _date.fromisoformat(max(dates))
+
+    halves: list[str] = []
+    quarters: list[str] = []
+    years: list[str] = []
+    for year in range(first.year, last.year + 1):
+        years.append(str(year))
+        for q in range(1, 5):
+            quarters.append(f"{year}_Q{q}")
+        for month in range(1, 13):
+            halves.append(f"{year}_{month:02d}_H1")
+            halves.append(f"{year}_{month:02d}_H2")
+    # Bottom-up so children exist before parents consume them.
+    return halves + quarters + years
+
+
+def _discover_synthesizable(
+    state: dict[str, Any], today: str
+) -> list[tuple[str, str]]:
+    """Return (canonical_label, tier) for every period that is COMPLETE
+    (its range_end is strictly before today) and not-yet-fresh (missing or
+    stale), in bottom-up order. Sparse-month halves are collapsed to their
+    merged H1-H2 label and de-duplicated. Empty periods are skipped — they
+    only need stubs, which the higher tier's gather step writes on demand.
+    """
+    from .calendar import canonical_label
+
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for raw in _all_candidate_periods(state):
+        try:
+            label = canonical_label(raw)
+            tier, rs, re_ = parse_period(label)
+        except PeriodParseError:
+            continue
+
+        # Collapse sparse-month halves to the merged label so we don't queue
+        # both H1 and H2 for a month that will auto-merge into one entry.
+        if tier == "half":
+            try:
+                merged, _msg = _resolve_half_label(state, label)
+                label = merged
+                _t2, rs, re_ = parse_period(label)
+            except SystemExit:
+                # _resolve_half_label refuses a merged form for a dense month;
+                # that only happens for explicit merged input, not our per-half
+                # enumeration, so treat as non-collapsing and continue.
+                pass
+
+        if label in seen:
+            continue
+        seen.add(label)
+
+        # Only periods that have fully ended. Partial periods are exactly
+        # what the user asked to exclude.
+        if not (re_ < today):
+            continue
+
+        # Skip empty halves entirely — no conversations, nothing to write but
+        # a stub, and stubs are created lazily by the parent rollup anyway.
+        if tier == "half":
+            if not state_mod.conversations_in_period(state, rs, re_):
+                continue
+
+        if state_mod.entry_stale(state, label, rs, re_):
+            out.append((label, tier))
+    return out
+
 
 def run(args: Any) -> None:
+    """Dispatch: a single --period runs once; no --period synthesizes every
+    complete, out-of-date period bottom-up."""
+    if getattr(args, "period", None):
+        _run_one(args)
+        return
+
+    ensure_dirs()
+    state = state_mod.load()
+
+    from datetime import date as _date
+    today = _date.today().isoformat()
+    todo = _discover_synthesizable(state, today)
+
+    if not todo:
+        print("Nothing to synthesize — all complete periods are up to date.")
+        return
+
+    print(f"{len(todo)} period(s) to synthesize (complete + out-of-date), in order:")
+    for label, tier in todo:
+        print(f"  · {label} ({tier})")
+    print()
+
+    if getattr(args, "dry_run", False):
+        print("Dry run — nothing synthesized. Drop --dry-run to build them.")
+        return
+
+    # Batch mode is non-interactive: every period here has already ended
+    # (so no partial-period prompt) and we skip the stale-summary prompt so
+    # the run doesn't block. The single-period path is where you get prompts.
+    import copy
+    failures: list[tuple[str, str]] = []
+    for label, _tier in todo:
+        one = copy.copy(args)
+        one.period = label
+        one.yes = True
+        print(f"\n{'─' * 60}\n▶ {label}\n{'─' * 60}")
+        try:
+            _run_one(one)
+        except SystemExit as e:
+            # A blocked rollup (missing/stale child) or claude error shouldn't
+            # abort the whole batch — record it and move on. Later periods that
+            # don't depend on it can still succeed.
+            failures.append((label, str(e) or "synthesis refused"))
+            print(f"⚠ Skipped {label}: {e}")
+
+    print(f"\n{'═' * 60}")
+    done = len(todo) - len(failures)
+    print(f"Batch complete: {done}/{len(todo)} synthesized.")
+    if failures:
+        print(f"{len(failures)} skipped:")
+        for label, why in failures:
+            print(f"  · {label}: {why}")
+
+
+def _run_one(args: Any) -> None:
     ensure_dirs()
     state = state_mod.load()
 
@@ -768,8 +911,9 @@ def run(args: Any) -> None:
     # of the full slug. Runs after set_sources so the Sources section's
     # links (which are already correct) aren't touched — they use stems
     # with underscores, not bare hex UUIDs.
-    from .links import fix_inline_links
+    from .links import fix_inline_links, fix_period_links
     output = fix_inline_links(output, state)
+    output = fix_period_links(output, state)
 
     # Compute and inject the frontmatter BEFORE writing. Two groups:
     # - identity/period metadata (period, tier, range, created_at, input count)

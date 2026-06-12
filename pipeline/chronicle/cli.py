@@ -91,12 +91,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Build a period entry. Tier inferred from the label "
         "(2026_Apr_H1=half, 2026_Apr=full-month half, 2026_Q2=quarter, 2026=year). "
         "If a month is sparse (<10 conversations), a half-tier run on either "
-        "half auto-merges into a single 2026_Apr_H1-H2 entry covering the whole month.",
+        "half auto-merges into a single 2026_Apr_H1-H2 entry covering the whole month. "
+        "With no --period, synthesizes every missing/stale entry whose period has "
+        "already ended, bottom-up (halves → quarters → years).",
     )
     p_syn.add_argument(
         "-p", "--period",
-        required=True,
-        help="Period label. Examples: 2026_Apr_H1, 2026_Apr_H2, 2026_Apr_H1-H2, 2026_Apr, 2026_Q2, 2026.",
+        help="Period label. Examples: 2026_Apr_H1, 2026_Apr_H2, 2026_Apr_H1-H2, 2026_Apr, 2026_Q2, 2026. "
+        "Omit to synthesize all complete, out-of-date periods automatically.",
+    )
+    p_syn.add_argument(
+        "-n", "--dry-run", action="store_true",
+        help="With no --period: list the periods that would be synthesized, in order, without running Claude.",
     )
     p_syn.add_argument("-m", "--model", default="opus", help="Model alias (opus, sonnet, haiku) or full ID. Resolved to exact ID for provenance. Default: opus.")
     p_syn.add_argument("-e", "--effort", default="max", choices=["high", "max"], help="Extended thinking effort level (default: max).")
