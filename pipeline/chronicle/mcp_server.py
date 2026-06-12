@@ -210,6 +210,104 @@ def chronicle_projects() -> str:
 
 
 @mcp.tool()
+def chronicle_themes(
+    min_count: int = 3,
+    since: str | None = None,
+    contains: str | None = None,
+    limit: int = 40,
+) -> str:
+    """The recurrence map — how often each theme (keyword) shows up across
+    ALL of Alejandro's conversations, with the date span over which it
+    recurred. This is the "have we been here before?" / "what do I keep
+    circling?" view, orthogonal to the zoom-in browse of chronicle_cards.
+
+    Each row: occurrence count · first-seen → last-seen · theme. The count
+    is how MANY conversations touched it (corpus presence); the span tells
+    you whether it is still warm or went cold. A high count with an old
+    last-seen date is an EXHAUSTED theme; a modest count still firing
+    recently is a LIVE thread.
+
+    HOW TO USE for revisiting:
+    - High count = a trunk-line you keep working (e.g. FOP, consciousness).
+      Follow it DEEPER with chronicle_find / chronicle_cards.
+    - A theme whose last-seen is months old = possibly resolved, or a
+      dropped thread worth picking back up.
+    - Range across the list, don't just take the top — the thin,
+      recently-touched themes are often the more interesting revisit.
+
+    This counts corpus PRESENCE only (how often a theme was discussed),
+    not how often it was revisited through this tool — that is a separate
+    signal not yet tracked.
+
+    Args:
+        min_count: Only show themes occurring at least this many times
+            (default 3). Lower to surface the long tail; raise for trunk-lines.
+        since: Only count occurrences on/after this date (YYYY-MM-DD), e.g.
+            "2026-01-01" to see what's been active this year. Optional.
+        contains: Only show themes whose text contains this substring
+            (case-insensitive), e.g. "trad" or "consciousness". Optional.
+        limit: Max themes to return, most-frequent first (default 40).
+    """
+    from collections import defaultdict
+
+    idx = load_index()
+    cards = idx.get("entries", []) if idx else []
+    if not cards:
+        return "No index found. Run `chronicle index` first."
+
+    dates: dict[str, list[str]] = defaultdict(list)
+    for c in cards:
+        dt = (c.get("created_at") or "")[:10]
+        if not dt:
+            continue
+        if since and dt < since:
+            continue
+        for kw in (c.get("keywords") or "").split(","):
+            kw = kw.strip()
+            if kw:
+                dates[kw.lower()].append(dt)
+
+    sub = contains.lower() if contains else None
+    rows = []
+    for theme, ds in dates.items():
+        if len(ds) < min_count:
+            continue
+        if sub and sub not in theme:
+            continue
+        ds.sort()
+        rows.append((theme, len(ds), ds[0], ds[-1]))
+
+    if not rows:
+        scope = []
+        if since:
+            scope.append(f"since {since}")
+        if contains:
+            scope.append(f"containing '{contains}'")
+        return (
+            f"No themes with ≥{min_count} occurrences"
+            + (" " + ", ".join(scope) if scope else "")
+            + ". Lower min_count to widen."
+        )
+
+    # Most frequent first; among equal counts, more-recent last-seen first.
+    rows.sort(key=lambda r: r[3], reverse=True)   # last-seen desc (tie-break)
+    rows.sort(key=lambda r: r[1], reverse=True)   # count desc (primary, stable)
+    rows = rows[:limit]
+
+    header = f"Themes by recurrence (≥{min_count}×"
+    if since:
+        header += f", since {since}"
+    if contains:
+        header += f", containing '{contains}'"
+    header += f") — {len(rows)} shown:\n"
+    lines = [header]
+    for theme, n, first, last in rows:
+        span = first if first == last else f"{first} → {last}"
+        lines.append(f"  {n:>3}×  {span}  {theme}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
 def chronicle_cards(
     uuids: list[str] | None = None,
     period: str | None = None,
