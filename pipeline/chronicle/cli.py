@@ -82,6 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
     sum_target.add_argument("-d", "--date", nargs="+", help="One date/period label (2026-04-22, 2026_Apr_H1, 2026_Apr, 2026_Q2, 2026), or two single-day values for an inclusive range. The literal 'now' = today, so -d 2026-03-20 now covers from the 20th to today.")
     sum_target.add_argument("-dn", "--date-now", metavar="DATE", help="Shortcut for `-d DATE now`: summarize stale conversations from DATE through today. e.g. -dn 2026-03-20.")
     p_sum.add_argument("-f", "--force", action="store_true", help="Force re-summarize even if already fresh. Deletes existing summary file(s) first.")
+    p_sum.add_argument("-n", "--dry-run", action="store_true", help="List the conversations that would be summarized, in order, without calling Claude.")
     p_sum.add_argument("-w", "--workers", type=int, default=1, help="Parallel claude invocations (default 1; try 4 for bulk runs). Watch for API rate limits.")
     p_sum.add_argument("-m", "--model", default="opus", help="Model alias (opus, sonnet, haiku) or full ID. Resolved to exact ID for provenance. Default: opus.")
     p_sum.set_defaults(func=_summarize_cmd)

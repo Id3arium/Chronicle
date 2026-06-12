@@ -14,6 +14,7 @@ and continue.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -52,7 +53,6 @@ def _load_branches(uuid: str, created_at: str) -> dict[str, Any] | None:
     if not branch_path.exists():
         return None
     try:
-        import json
         return json.loads(branch_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return None
@@ -97,6 +97,7 @@ def _inject_metrics(
     fields, body = split_frontmatter(output)
 
     # Overwrite identity fields with ground-truth values from the pipeline.
+    conv_model_val = None
     if identity:
         fields["uuid"] = identity["uuid"]
         fields["title"] = identity.get("title") or "untitled"
@@ -106,21 +107,28 @@ def _inject_metrics(
             fields["last_active"] = identity["updated_at"]
         if identity.get("project_name"):
             fields["project"] = identity["project_name"]
+        conv_model_val = identity.get("conversation_model")
 
-    # Insert summarized_at right after last_active so date fields cluster.
-    # Rebuild the dict to control order: everything up through last_active,
-    # then summarized_at, then the rest.
+    # Rebuild the dict with controlled key order. The goal:
+    #   identity fields → summarized_at → models (adjacent) → Claude's
+    #   content fields → metrics at the bottom.
     ts = now_iso()
     ordered: dict[str, Any] = {}
-    inserted = False
     for k, v in fields.items():
+        # Skip keys we'll place explicitly below.
+        if k in ("summarized_at", "summary_model", "conversation_model",
+                 "model", "original_words", "summary_words", "compression_ratio"):
+            continue
         ordered[k] = v
-        if k == "last_active" and "summarized_at" not in fields:
-            ordered["summarized_at"] = ts
-            inserted = True
-    if not inserted:
+        if k == "last_active":
+            ordered["summarized_at"] = fields.get("summarized_at") or ts
+            ordered["conversation_model"] = conv_model_val or fields.get("conversation_model") or ""
+            ordered["summary_model"] = model
+    # Safety: if last_active wasn't in fields (shouldn't happen), append.
+    if "summarized_at" not in ordered:
         ordered["summarized_at"] = ts
-    ordered["model"] = model
+        ordered["conversation_model"] = conv_model_val or fields.get("conversation_model") or ""
+        ordered["summary_model"] = model
     ordered["original_words"] = orig_words
     ordered["summary_words"] = summary_metrics["words"]
     ordered["compression_ratio"] = ratio
@@ -130,17 +138,18 @@ def _inject_metrics(
 import re as _re
 
 _SUMMARY_SUBHEADER_RE = _re.compile(
-    r"^\*\*\d[\d,]+ words → \d[\d,]+ words · [\d.]+ ratio\*\*\n*",
+    r"^\*\*\d[\d,]+ words → \d[\d,]+ words · [\d.]+ ratio(?:\s+·\s+\S+)?\*\*\n*",
     _re.MULTILINE,
 )
 
 
 def _inject_summary_subheader(
-    output: str, orig_words: int, summary_words: int, ratio: float
+    output: str, orig_words: int, summary_words: int, ratio: float,
+    conversation_model: str = "",
 ) -> str:
     """Insert/replace a stats line as the first body line of a summary.
 
-    Format: **X,XXX words → YYY words · 0.XXXX ratio**
+    Format: **X,XXX words → YYY words · 0.XXXX ratio · model-name**
 
     Idempotent: strips any existing stats line before inserting.
     """
@@ -151,7 +160,8 @@ def _inject_summary_subheader(
     body = _SUMMARY_SUBHEADER_RE.sub("", body, count=1)
     # Strip leading blank lines so we don't get double-spacing.
     body = body.lstrip("\n")
-    stats = f"**{orig_words:,} words → {summary_words:,} words · {ratio:.4f} ratio**"
+    model_suffix = f" · {conversation_model}" if conversation_model else ""
+    stats = f"**{orig_words:,} words → {summary_words:,} words · {ratio:.4f} ratio{model_suffix}**"
     new_body = f"{stats}\n\n{body}"
     if fields:
         return render_with_frontmatter(fields, new_body)
@@ -283,6 +293,12 @@ def summarize_one(
     )
 
     conv_text_raw = conv_path.read_text(encoding="utf-8")
+    # Extract the model used in the original conversation (top-level "model"
+    # key in the JSON) before stripping — strip_conversation may discard it.
+    try:
+        conv_model = json.loads(conv_text_raw).get("model")
+    except (json.JSONDecodeError, AttributeError):
+        conv_model = None
     raw_tokens = estimate_tokens(conv_text_raw)
     conv_text = strip_conversation(conv_text_raw)
     stripped_tokens = estimate_tokens(conv_text)
@@ -639,10 +655,11 @@ def summarize_one(
         "created_at": conv_meta.get("created_at"),
         "updated_at": conv_meta.get("updated_at"),
         "project_name": conv_meta.get("project_name"),
+        "conversation_model": conv_model,
     })
     # Inject a stats subheader as the first body line so the reader sees
     # key numbers at a glance without opening frontmatter.
-    output = _inject_summary_subheader(output, orig_words, summary_metrics["words"], ratio)
+    output = _inject_summary_subheader(output, orig_words, summary_metrics["words"], ratio, conv_model or "")
     # Atomic write: never leave a half-finished summary on disk if something
     # crashes between bytes. Write to a sibling .tmp and rename on success.
     tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
@@ -693,6 +710,26 @@ def run(args: Any) -> None:
         targets, in_scope, scope_desc = _select_targets(state, args)
     except SystemExit:
         raise
+
+    # --dry-run: show the queue (what would be summarized) and stop, before
+    # any state mutation or Claude call. Mirrors `chronicle syn --dry-run`.
+    if getattr(args, "dry_run", False):
+        if not targets:
+            print(f"Nothing to summarize in {scope_desc} — all fresh.")
+            return
+        print(
+            f"{len(targets)} conversation(s) to summarize in {scope_desc}, in order:"
+        )
+        rows = sorted(
+            ((u, state["conversations"].get(u, {})) for u in targets),
+            key=lambda x: x[1].get("created_at") or "",
+        )
+        for uuid, c in rows:
+            date = (c.get("created_at") or "")[:10]
+            title = (c.get("title") or "(untitled)")[:60]
+            print(f"  · {date}  {title}  [{uuid[:8]}]")
+        print("\nDry run — nothing summarized. Drop --dry-run to run them.")
+        return
 
     force = getattr(args, "force", False)
     if force and targets:
