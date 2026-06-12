@@ -23,6 +23,24 @@ from .calendar import PeriodParseError, parse_period
 mcp = FastMCP("Chronicle")
 
 
+def _norm_significance(value: str) -> tuple[str | None, str | None]:
+    """Normalize a significance filter. Returns (canonical, error).
+
+    Accepts high/medium/low (and the alias 'med'). Anything else returns an
+    error string — NOT a silent empty filter, which would masquerade as
+    "no matches" and falsely imply a topic was never discussed.
+    """
+    v = value.strip().lower()
+    if v == "med":
+        v = "medium"
+    if v in ("high", "medium", "low"):
+        return v, None
+    return None, (
+        f"Unknown significance '{value}'. Use one of: high, medium, low "
+        f"(or omit to not filter by significance)."
+    )
+
+
 @mcp.tool()
 def chronicle_find(
     query: str,
@@ -70,9 +88,9 @@ def chronicle_find(
 
     sig_filter = None
     if significance:
-        sig_filter = significance.lower()
-        if sig_filter == "med":
-            sig_filter = "medium"
+        sig_filter, err = _norm_significance(significance)
+        if err:
+            return err
 
     idx = load_index()
     if not idx or not idx.get("inverted"):
@@ -160,9 +178,9 @@ def chronicle_ls(
         scope = f"{project}" + (f" in {period}" if period else "")
 
     if significance:
-        sig_filter = significance.lower()
-        if sig_filter == "med":
-            sig_filter = "medium"
+        sig_filter, err = _norm_significance(significance)
+        if err:
+            return err
         rows = [
             (u, c) for u, c in rows if c.get("significance") == sig_filter
         ]
@@ -361,9 +379,9 @@ def chronicle_cards(
 
     sig_filter = None
     if significance:
-        sig_filter = significance.lower()
-        if sig_filter == "med":
-            sig_filter = "medium"
+        sig_filter, err = _norm_significance(significance)
+        if err:
+            return err
 
     if uuids:
         prefixes = [u.lower() for u in uuids]
@@ -454,10 +472,17 @@ def chronicle_read(path: str) -> str:
     if not p.is_absolute():
         p = vault_root() / p
 
+    if p.suffix == ".json" or "conversations/" in str(path).replace("\\", "/"):
+        return (
+            f"That's a raw conversation transcript, not a summary/entry. "
+            f"chronicle_read is for .md summaries and entries. To read the "
+            f"verbatim messages of a transcript, use chronicle_passage "
+            f"(pass the UUID, e.g. the __<id> in this filename)."
+        )
     if not p.exists():
         return f"File not found: {p}"
     if not p.suffix == ".md":
-        return f"Not a markdown file: {p}"
+        return f"Not a markdown file: {p}. chronicle_read serves .md summaries and entries only."
 
     # Safety: only serve files inside the vault
     try:
@@ -527,7 +552,17 @@ def chronicle_passage(
             `index` (what followed). Default 0. Capped at 5.
         limit: In keyword mode, max matching messages to return (default 10).
     """
-    conv_path = _resolve_conversation(conversation)
+    try:
+        conv_path = _resolve_conversation(conversation)
+    except _AmbiguousRef as e:
+        lines = [
+            f"'{conversation}' is ambiguous — the prefix '{e.prefix}' matches "
+            f"{len(e.candidates)} conversations. Pass more characters (the full "
+            f"8-char UUID from chronicle_find / chronicle_cards is enough):"
+        ]
+        for u, title in e.candidates[:10]:
+            lines.append(f"  · {u[:8]}  {title[:60]}")
+        return "\n".join(lines)
     if conv_path is None:
         return (
             f"Conversation not found: '{conversation}'. Pass the UUID (or its "
@@ -536,6 +571,14 @@ def chronicle_passage(
             f"or filename works too, but the UUID is most reliable. If you "
             f"don't have one, run chronicle_find first to locate the "
             f"conversation, then use the UUID it returns."
+        )
+
+    if query is not None and index is not None:
+        return (
+            "Pass either query OR index, not both. query searches by keyword; "
+            "index fetches one message by position. To do both — find a hit, "
+            "then read around it — call twice: first query to get the index, "
+            "then index=N with before/after."
         )
 
     try:
@@ -636,6 +679,15 @@ def _extract_text(msg: dict) -> str:
     return str(content)
 
 
+class _AmbiguousRef(Exception):
+    """Raised when a UUID prefix matches more than one conversation, so we
+    refuse to silently pick one. Carries the candidates for a helpful error."""
+
+    def __init__(self, prefix: str, candidates: list[tuple[str, str]]):
+        self.prefix = prefix
+        self.candidates = candidates  # list of (uuid, title)
+
+
 def _resolve_conversation(ref: str) -> Path | None:
     """Resolve a conversation reference to its raw JSON transcript path.
 
@@ -651,6 +703,11 @@ def _resolve_conversation(ref: str) -> Path | None:
     The trick: both summary and conversation filenames end in
     `__<8hex>.{md,json}`, and that 8-hex is the UUID prefix. So whatever the
     ref looks like, we pull the UUID prefix out of it and look it up.
+
+    Raises _AmbiguousRef if a prefix matches >1 conversation — better a
+    "be more specific" error than a confidently-wrong transcript. An exact
+    full-UUID match is never ambiguous (it wins over being a prefix of
+    longer hypothetical IDs).
     """
     state = state_mod.load()
     convos = state.get("conversations", {})
@@ -661,11 +718,25 @@ def _resolve_conversation(ref: str) -> Path | None:
         pfx = pfx.replace("-", "").lower()
         if not pfx:
             return None
+        matches: list[tuple[str, dict]] = []
         for uuid, c in convos.items():
-            if uuid.replace("-", "").lower().startswith(pfx):
-                cf = c.get("conversation_file")
-                if cf and (vault_root() / cf).exists():
-                    return vault_root() / cf
+            norm = uuid.replace("-", "").lower()
+            if norm == pfx:
+                matches = [(uuid, c)]  # exact UUID wins outright
+                break
+            if norm.startswith(pfx):
+                matches.append((uuid, c))
+        if not matches:
+            return None
+        if len(matches) > 1:
+            raise _AmbiguousRef(
+                pfx,
+                [(u, (c.get("title") or "(untitled)")) for u, c in matches],
+            )
+        _u, c = matches[0]
+        cf = c.get("conversation_file")
+        if cf and (vault_root() / cf).exists():
+            return vault_root() / cf
         return None
 
     ref = ref.strip()
