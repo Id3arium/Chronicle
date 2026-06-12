@@ -9,8 +9,12 @@ description = "Chronicle pipeline: ingest Claude.ai exports, orchestrate summari
 requires-python = ">=3.11"
 dependencies = []
 
+[project.optional-dependencies]
+mcp = ["mcp[cli]"]
+
 [project.scripts]
 chronicle = "chronicle.cli:main"
+chronicle-mcp = "chronicle.mcp_server:main"
 
 [tool.setuptools.packages.find]
 include = ["chronicle*"]

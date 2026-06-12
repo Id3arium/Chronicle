@@ -6,6 +6,17 @@ import argparse
 import sys
 from pathlib import Path
 
+MODEL_ALIASES: dict[str, str] = {
+    "opus": "claude-opus-4-8",
+    "sonnet": "claude-sonnet-4-6",
+    "haiku": "claude-haiku-4-5-20251001",
+}
+
+
+def resolve_model(name: str) -> str:
+    """Resolve a short alias to a full model ID, or pass through as-is."""
+    return MODEL_ALIASES.get(name, name)
+
 
 def _ingest_cmd(args: argparse.Namespace) -> None:
     from .ingest import ingest_all
@@ -32,11 +43,13 @@ def _status_cmd(args: argparse.Namespace) -> None:
 
 def _summarize_cmd(args: argparse.Namespace) -> None:
     from . import summarize
+    args.model = resolve_model(args.model)
     summarize.run(args)
 
 
 def _synthesize_cmd(args: argparse.Namespace) -> None:
     from . import synthesize
+    args.model = resolve_model(args.model)
     synthesize.run(args)
 
 
@@ -70,7 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
     sum_target.add_argument("-dn", "--date-now", metavar="DATE", help="Shortcut for `-d DATE now`: summarize stale conversations from DATE through today. e.g. -dn 2026-03-20.")
     p_sum.add_argument("-f", "--force", action="store_true", help="Force re-summarize even if already fresh. Deletes existing summary file(s) first.")
     p_sum.add_argument("-w", "--workers", type=int, default=1, help="Parallel claude invocations (default 1; try 4 for bulk runs). Watch for API rate limits.")
-    p_sum.add_argument("-m", "--model", default="claude-sonnet-4-6", help="Model ID passed to `claude --model` and recorded in frontmatter for provenance (default: claude-sonnet-4-6 — fast/cheap, good for extraction). Pin an explicit ID so the recorded model is exact, not an alias that drifts. Override with claude-opus-4-7 if a run reads weak.")
+    p_sum.add_argument("-m", "--model", default="opus", help="Model alias (opus, sonnet, haiku) or full ID. Resolved to exact ID for provenance. Default: opus.")
     p_sum.set_defaults(func=_summarize_cmd)
 
     p_syn = sub.add_parser(
@@ -85,7 +98,7 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="Period label. Examples: 2026_Apr_H1, 2026_Apr_H2, 2026_Apr_H1-H2, 2026_Apr, 2026_Q2, 2026.",
     )
-    p_syn.add_argument("-m", "--model", default="claude-opus-4-7", help="Model ID passed to `claude --model` and recorded in frontmatter for provenance (default: claude-opus-4-7 — synthesis is the interpretive tier, worth the cost). Pin an explicit ID so provenance is exact.")
+    p_syn.add_argument("-m", "--model", default="opus", help="Model alias (opus, sonnet, haiku) or full ID. Resolved to exact ID for provenance. Default: opus.")
     p_syn.add_argument("-e", "--effort", default="max", choices=["high", "max"], help="Extended thinking effort level (default: max).")
     p_syn.add_argument("-y", "--yes", action="store_true", help="Skip confirmation prompts (period not yet ended, stale summaries).")
     p_syn.set_defaults(func=_synthesize_cmd)
@@ -143,7 +156,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_bkw.add_argument("-f", "--force", action="store_true", help="Re-extract even if keywords already exist.")
     p_bkw.add_argument("-w", "--workers", type=int, default=3, help="Parallel workers (default: 3).")
     p_bkw.add_argument("-m", "--model", default="haiku", help="Model for keyword extraction (default: haiku).")
-    p_bkw.set_defaults(func=lambda a: __import__("chronicle.backfill_keywords", fromlist=["run"]).run(a))
+    def _bkw_cmd(a: argparse.Namespace) -> None:
+        a.model = resolve_model(a.model)
+        __import__("chronicle.backfill_keywords", fromlist=["run"]).run(a)
+    p_bkw.set_defaults(func=_bkw_cmd)
 
     p_stale = sub.add_parser(
         "stale", aliases=["stl"],
