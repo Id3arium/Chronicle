@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from pathlib import Path
 from typing import Any
 
@@ -96,6 +97,7 @@ def chronicle_find(
             r["significance"], "?"
         )
         matched = ", ".join(r["matches"])
+        uid = (r.get("uuid") or "")[:8]
         lines.append(
             f"  {sig_badge} {r['created_at']}  {r['title'][:60]}  "
             f"(score: {r['score']:.1f})"
@@ -103,6 +105,8 @@ def chronicle_find(
         lines.append(f"    matched: {matched}")
         if r["topics"]:
             lines.append(f"    topics: {r['topics']}")
+        if uid:
+            lines.append(f"    uuid: {uid}  (pass to chronicle_passage)")
         if r["summary_file"]:
             lines.append(f"    file: {r['summary_file']}")
         lines.append("")
@@ -408,7 +412,10 @@ def chronicle_cards(
         title = c.get("title") or "(untitled)"
         proj = c.get("project") or ""
         proj_tag = f"  [{proj}]" if proj and proj != "general" else ""
+        uid = (c.get("uuid") or "")[:8]
         lines.append(f"  {sig} {date}  {title[:60]}{proj_tag}")
+        if uid:
+            lines.append(f"    uuid: {uid}")
         if c.get("topics"):
             lines.append(f"    topics: {c['topics']}")
         if c.get("keywords"):
@@ -505,9 +512,12 @@ def chronicle_passage(
     both. Pull only the direction you need; widen only if it's not enough.
 
     Args:
-        conversation: UUID (or prefix) of the conversation, or the
-            relative path to the conversation JSON file
-            (e.g. "conversations/2026-02/27_markets__322ed80e.json").
+        conversation: Which conversation to read. Easiest: pass the UUID
+            from chronicle_find / chronicle_cards (full or just the first
+            8 chars). It also accepts whatever path those tools gave you —
+            a summary file ("summaries/.../27_markets__322ed80e.md"), a
+            conversation file, or a bare filename — and resolves it to the
+            transcript. When in doubt, pass the UUID.
         query: Space-separated keywords. Matches any message containing
             ANY keyword (case-insensitive). Provide query OR index.
         index: Message position (0-based) to retrieve. Provide query OR index.
@@ -519,7 +529,14 @@ def chronicle_passage(
     """
     conv_path = _resolve_conversation(conversation)
     if conv_path is None:
-        return f"Conversation not found: {conversation}"
+        return (
+            f"Conversation not found: '{conversation}'. Pass the UUID (or its "
+            f"first 8 characters) from chronicle_find or chronicle_cards — "
+            f"e.g. conversation=\"322ed80e\". A summary/conversation file path "
+            f"or filename works too, but the UUID is most reliable. If you "
+            f"don't have one, run chronicle_find first to locate the "
+            f"conversation, then use the UUID it returns."
+        )
 
     try:
         data = json.loads(conv_path.read_text(encoding="utf-8"))
@@ -620,38 +637,64 @@ def _extract_text(msg: dict) -> str:
 
 
 def _resolve_conversation(ref: str) -> Path | None:
-    """Resolve a conversation reference to a file path.
+    """Resolve a conversation reference to its raw JSON transcript path.
 
-    Accepts: UUID, UUID prefix, or relative file path.
+    Deliberately forgiving — a model arriving here is usually holding
+    whatever chronicle_find / chronicle_cards / chronicle_read just handed
+    it, which is rarely a tidy conversation path. So ALL of these resolve to
+    the same transcript:
+      - a full UUID or UUID prefix
+      - a conversation JSON path (relative or absolute)
+      - a SUMMARY path or filename (summaries/.../27_markets__322ed80e.md)
+      - a bare filename of either kind
+
+    The trick: both summary and conversation filenames end in
+    `__<8hex>.{md,json}`, and that 8-hex is the UUID prefix. So whatever the
+    ref looks like, we pull the UUID prefix out of it and look it up.
     """
-    # Direct path
-    if "/" in ref or ref.endswith(".json"):
-        p = Path(ref)
-        if not p.is_absolute():
-            p = vault_root() / p
-        return p if p.exists() else None
-
-    # UUID lookup via state
     state = state_mod.load()
     convos = state.get("conversations", {})
 
-    # Exact match
-    if ref in convos:
-        cf = convos[ref].get("conversation_file")
-        if cf:
-            p = vault_root() / cf
-            return p if p.exists() else None
+    def _by_prefix(pfx: str) -> Path | None:
+        # Compare on dash-stripped hex so a dashed UUID, a bare 32-hex string,
+        # and an 8-hex filename token all match the same conversation.
+        pfx = pfx.replace("-", "").lower()
+        if not pfx:
+            return None
+        for uuid, c in convos.items():
+            if uuid.replace("-", "").lower().startswith(pfx):
+                cf = c.get("conversation_file")
+                if cf and (vault_root() / cf).exists():
+                    return vault_root() / cf
+        return None
 
-    # Prefix match
-    ref_lower = ref.lower()
-    for uuid, c in convos.items():
-        if uuid.lower().startswith(ref_lower):
-            cf = c.get("conversation_file")
-            if cf:
-                p = vault_root() / cf
-                return p if p.exists() else None
+    ref = ref.strip()
 
-    return None
+    # 1. A real conversation JSON path that exists as given — use it directly.
+    if ref.endswith(".json"):
+        p = Path(ref)
+        if not p.is_absolute():
+            p = vault_root() / p
+        if p.exists():
+            return p
+        # Falls through to UUID extraction below (e.g. bare filename, or a
+        # summary path the model passed by mistake).
+
+    # 2. Pull a UUID (or 8+ hex prefix) out of the ref and resolve by it.
+    #    Matches the trailing `__<hex>` in any summary/conversation filename,
+    #    a full dashed UUID anywhere, or a bare hex token.
+    m = (
+        re.search(r"__([0-9a-fA-F]{6,})", ref)                       # ...__322ed80e.md
+        or re.search(r"\b([0-9a-fA-F]{8}-[0-9a-fA-F-]{4,27})\b", ref)  # dashed uuid
+        or re.search(r"\b([0-9a-fA-F]{8,32})\b", ref)                # bare hex token
+    )
+    if m:
+        hit = _by_prefix(m.group(1))
+        if hit:
+            return hit
+
+    # 3. Last resort: treat the whole ref as a prefix.
+    return _by_prefix(ref)
 
 
 @mcp.tool()
