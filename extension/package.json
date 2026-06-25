@@ -1,0 +1,13 @@
+{
+  "name": "chronicle-export",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Build tooling for the Chronicle Export Firefox extension.",
+  "scripts": {
+    "lint": "web-ext lint --source-dir .",
+    "build": "web-ext build --source-dir . --artifacts-dir ../artifacts --overwrite-dest"
+  },
+  "devDependencies": {
+    "web-ext": "^10.0.0"
+  }
+}

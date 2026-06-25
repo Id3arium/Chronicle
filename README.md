@@ -36,7 +36,7 @@ Claude.ai  ──(extension)──▶  export.json  ──(pipeline)──▶  s
 ### 1. Build and install the extension
 
 ```bash
-./build.sh            # lints + builds the extension into artifacts/ (requires web-ext)
+./build.sh            # lints + builds the extension into artifacts/ (needs Node 20+)
 ```
 
 Then load it in Firefox via `about:debugging` → **This Firefox** → **Load Temporary
