@@ -45,10 +45,8 @@ def _is_auth_error(result: subprocess.CompletedProcess) -> bool:
 _AUTH_HELP = (
     "claude couldn't authenticate (401). Its login is missing or expired — "
     "summaries can't be generated until it's fixed.\n"
-    "Fix: in a normal terminal, run `claude`, then `/login` and complete the "
-    "browser flow. Verify with:\n"
-    "    claude -p \"reply with exactly: OK\"\n"
-    "That should print OK, not a 401. Then re-run the summarize."
+    "Fix: run `claude auth login` (then `claude auth status` to confirm), "
+    "and re-run the summarize."
 )
 
 
