@@ -36,6 +36,35 @@ def _ingest_cmd(args: argparse.Namespace) -> None:
     )
 
 
+def _sync_cmd(args: argparse.Namespace) -> None:
+    """The full loop: ingest the latest export, then summarize everything stale.
+
+    This is the no-arg default — `chronicle` with nothing else runs this. The
+    old free ingest-only behavior lives on under `--ingest-only`.
+    """
+    # 1. Ingest. `--path` targets a specific file; otherwise take the latest.
+    args.latest = args.path is None
+    _ingest_cmd(args)
+
+    if getattr(args, "ingest_only", False):
+        return
+
+    # 2. Summarize every stale conversation (summarize.run also reindexes).
+    print()  # blank line between the ingest report and the summarize run
+    from . import summarize
+    sum_args = argparse.Namespace(
+        uuid=None,
+        all_stale=True,
+        date=None,
+        date_now=None,
+        force=False,
+        dry_run=getattr(args, "dry_run", False),
+        workers=getattr(args, "workers", 1),
+        model=resolve_model(getattr(args, "model", "opus")),
+    )
+    summarize.run(sum_args)
+
+
 def _status_cmd(args: argparse.Namespace) -> None:
     from .status import print_status
     print_status()
@@ -71,6 +100,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_ingest.add_argument("path", nargs="?", help="Specific file to ingest. Default: every unprocessed file in data/inbox/.")
     p_ingest.add_argument("-l", "--latest", action="store_true", help="Process only the most recent file in data/inbox/ (by modification time).")
     p_ingest.set_defaults(func=_ingest_cmd)
+
+    p_sync = sub.add_parser(
+        "sync", aliases=["sy"],
+        help="The full loop (also the no-arg default): ingest the latest export, "
+        "then summarize every stale conversation and rebuild the index. "
+        "Calls Claude and costs money — use --ingest-only for the old free "
+        "ingest, or --dry-run to preview what would be summarized.",
+    )
+    p_sync.add_argument("path", nargs="?", help="Specific export to ingest. Default: the latest unprocessed file in data/inbox/.")
+    p_sync.add_argument("-i", "--ingest-only", action="store_true", help="Stop after ingest — no summarize, no Claude, no spend (the old default).")
+    p_sync.add_argument("-n", "--dry-run", action="store_true", help="Ingest, then list the conversations that would be summarized without calling Claude.")
+    p_sync.add_argument("-w", "--workers", type=int, default=1, help="Parallel claude invocations for the summarize pass (default 1; try 4 for bulk).")
+    p_sync.add_argument("-m", "--model", default="opus", help="Model alias (opus, sonnet, haiku) or full ID for the summarize pass. Default: opus.")
+    p_sync.set_defaults(func=_sync_cmd)
 
     p_status = sub.add_parser("status", aliases=["sts"], help="Print pipeline state.")
     p_status.set_defaults(func=_status_cmd)
@@ -214,9 +257,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if not args.command:
+        # Bare `chronicle` runs the full loop: ingest latest + summarize stale.
         args.path = None
-        args.latest = True
-        args.func = _ingest_cmd
+        args.ingest_only = False
+        args.dry_run = False
+        args.workers = 1
+        args.model = "opus"
+        args.func = _sync_cmd
     try:
         args.func(args)
     except KeyboardInterrupt:

@@ -33,6 +33,18 @@ data/
 
 ## Commands
 
+### `chronicle` / `chronicle sync`
+The full loop, and the no-arg default. Ingests the latest export, summarizes every
+stale conversation, and rebuilds the search index — the one command to run after each
+export. It calls Claude, so it spends money and can take minutes on a large batch.
+
+- `--ingest-only` (`-i`) — stop after ingest; no Claude, no spend (the old default).
+- `--dry-run` (`-n`) — ingest, then list what would be summarized without calling Claude.
+- `--workers N` / `--model M` — passed through to the summarize pass.
+
+Period rollups are deliberately *not* part of this loop — run `chronicle synthesize`
+when you want to refresh the half-month/quarter/year entries.
+
 ### `chronicle ingest [path]`
 Parse one export (or every unprocessed file in `data/exports/`), split into
 per-conversation files, update `state.json`, regenerate `pending.md`, fire a

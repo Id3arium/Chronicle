@@ -51,9 +51,18 @@ uv pip install -e ./pipeline
 uv run chronicle --help
 ```
 
-Python 3.11+; no third-party runtime dependencies. Drop an export into the pipeline's
-inbox, then ingest, summarize, and synthesize. See **[pipeline/README.md](pipeline/README.md)**
-for the full command reference, directory layout, and freshness model.
+Python 3.11+; no third-party runtime dependencies. Drop an export into the inbox and
+run the whole loop with one command:
+
+```bash
+uv run chronicle          # ingest the latest export, summarize everything stale, reindex
+```
+
+That's the default — bare `chronicle` brings the archive up to date (it calls Claude, so
+it costs money; use `chronicle sync --ingest-only` for the free ingest, or `--dry-run` to
+preview). Period rollups (half-month → quarter → year) are a separate step:
+`chronicle syn`. See **[pipeline/README.md](pipeline/README.md)** for the full command
+reference, directory layout, and freshness model.
 
 ### 3. (Optional) Wire up the MCP server
 
