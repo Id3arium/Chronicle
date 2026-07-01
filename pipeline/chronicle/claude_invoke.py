@@ -32,6 +32,26 @@ def _is_rate_limit_error(result: subprocess.CompletedProcess) -> bool:
     return any(s in combined for s in ("rate", "429", "overloaded", "too many"))
 
 
+def _is_auth_error(result: subprocess.CompletedProcess) -> bool:
+    """Check if a failed claude invocation is an authentication failure."""
+    combined = ((result.stderr or "") + (result.stdout or "")).lower()
+    return any(
+        s in combined
+        for s in ("401", "authentication_error", "invalid authentication",
+                  "failed to authenticate")
+    )
+
+
+_AUTH_HELP = (
+    "claude couldn't authenticate (401). Its login is missing or expired — "
+    "summaries can't be generated until it's fixed.\n"
+    "Fix: in a normal terminal, run `claude`, then `/login` and complete the "
+    "browser flow. Verify with:\n"
+    "    claude -p \"reply with exactly: OK\"\n"
+    "That should print OK, not a 401. Then re-run the summarize."
+)
+
+
 def run_claude(
     instruction_path: Path,
     input_text: str,
@@ -103,6 +123,11 @@ def run_claude(
 
         if result.returncode == 0:
             return result.stdout
+
+        # Auth failures won't self-heal — surface the fix immediately, no retry
+        # and no raw API-error dump.
+        if _is_auth_error(result):
+            raise ClaudeInvocationError(_AUTH_HELP, stderr=result.stderr or "")
 
         # Build the error for reporting / retry decision.
         err_tail = (result.stderr or "").strip().splitlines()[-20:]

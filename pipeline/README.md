@@ -20,9 +20,14 @@ once installed, invoke the CLI as `uv run chronicle ...` (or activate the venv a
 ### Claude Code login (required for summarize/synthesize)
 
 The summarize and synthesize passes shell out to the `claude` CLI, which needs its own
-persistent login. Install [Claude Code](https://claude.com/claude-code), then in a normal
-terminal run `claude` and `/login` (complete the browser flow). Verify it can authenticate
-standalone:
+persistent login. Install [Claude Code](https://claude.com/claude-code), then log in from
+a normal terminal:
+
+```bash
+claude          # then type /login and complete the browser flow
+```
+
+Verify it can authenticate standalone:
 
 ```bash
 claude -p "reply with exactly: OK"     # should print OK, not a 401
