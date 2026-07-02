@@ -41,10 +41,64 @@ def _norm_significance(value: str) -> tuple[str | None, str | None]:
     )
 
 
+def _norm_day(value: str) -> tuple[str | None, str | None]:
+    """Normalize a single day string. Returns (YYYY-MM-DD, error).
+
+    Accepts an ISO date, or the literal 'now'/'today' meaning today. Anything
+    else returns an error string rather than a silent empty window (which would
+    read as "no matches" and falsely imply nothing happened in the range).
+    """
+    from datetime import date as _date
+    v = value.strip().lower()
+    if v in ("now", "today"):
+        return _date.today().isoformat(), None
+    try:
+        return _date.fromisoformat(v).isoformat(), None
+    except ValueError:
+        return None, (
+            f"Bad date '{value}'. Use YYYY-MM-DD (e.g. 2026-03-14), or 'now' "
+            f"for today."
+        )
+
+
+def _resolve_window(
+    from_date: str | None, to_date: str | None
+) -> tuple[str | None, str | None, str | None]:
+    """Resolve a from/to day range into (start, end, error).
+
+    `to` defaults to today when omitted. Returns (None, None, error) on a bad
+    date or an inverted range. Returns (None, None, None) when both are unset
+    (no date filtering requested).
+    """
+    if not from_date and not to_date:
+        return None, None, None
+    from datetime import date as _date
+    rs = None
+    if from_date:
+        rs, err = _norm_day(from_date)
+        if err:
+            return None, None, err
+    else:
+        rs = "0001-01-01"  # open start
+    if to_date:
+        re_, err = _norm_day(to_date)
+        if err:
+            return None, None, err
+    else:
+        re_ = _date.today().isoformat()
+    if rs > re_:
+        return None, None, (
+            f"Range start {rs} is after end {re_}. Swap 'from' and 'to'."
+        )
+    return rs, re_, None
+
+
 @mcp.tool()
 def chronicle_find(
     query: str,
     significance: str | None = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
     limit: int = 20,
 ) -> str:
     """Search Alejandro's Chronicle — a personal encyclopedia of his past
@@ -80,6 +134,11 @@ def chronicle_find(
     Args:
         query: Space-separated search terms. 1-3 specific terms work best.
         significance: Filter by "high", "medium", or "low". Optional.
+        from_date: Restrict to conversations on/after this day, YYYY-MM-DD (or
+            "now"). Use with to_date for "between X and Y". Optional.
+        to_date: Restrict to conversations on/before this day, YYYY-MM-DD (or
+            "now"). Defaults to today, so from_date alone means "since X".
+            Optional.
         limit: Max results to return (default 20).
     """
     terms = query.lower().split()
@@ -92,11 +151,19 @@ def chronicle_find(
         if err:
             return err
 
+    rs, re_, err = _resolve_window(from_date, to_date)
+    if err:
+        return err
+
     idx = load_index()
     if not idx or not idx.get("inverted"):
         return "Search index not found. Run `chronicle rebuild-index` first."
 
     results = _search_inverted(idx, terms, sig_filter)
+    if rs is not None:
+        results = [
+            r for r in results if rs <= (r.get("created_at") or "")[:10] <= re_
+        ]
     results.sort(
         key=lambda r: (
             -r["score"],
@@ -135,23 +202,40 @@ def chronicle_find(
 @mcp.tool()
 def chronicle_ls(
     period: str | None = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
     project: str | None = None,
     significance: str | None = None,
 ) -> str:
-    """List conversations, optionally filtered by period, project, and/or
-    significance. Provide at least one filter.
+    """List conversations, optionally filtered by period/date-range, project,
+    and/or significance. Provide at least one filter.
 
-    Period formats: "2026_Q1" (quarter), "2026_03_H2" (second half of
-    March), "2025" (full year). For the exact project name, see
-    chronicle_projects.
+    Two ways to scope by time (use one, not both):
+    - period: a named label — "2026_Q1" (quarter), "2026_03_H2" (second half
+      of March), "2025" (full year).
+    - from_date / to_date: an arbitrary day range. Use this for "between X and
+      Y" or "since X". `to_date` defaults to today when omitted, so from_date
+      alone means "from X until now".
+
+    For the exact project name, see chronicle_projects.
 
     Args:
         period: Period label like "2026_Q1", "2026_03_H2", "2025". Optional.
+        from_date: Range start, YYYY-MM-DD (or "now"). Optional.
+        to_date: Range end, YYYY-MM-DD (or "now"). Defaults to today. Optional.
         project: Exact project name (case-insensitive), e.g. "Hermes". Optional.
         significance: Filter by "high", "medium", or "low". Optional.
     """
-    if not (period or project or significance):
-        return "Provide at least one filter: period, project, or significance."
+    if period and (from_date or to_date):
+        return (
+            "Use either period (a named label) OR from_date/to_date (a day "
+            "range), not both."
+        )
+    if not (period or from_date or to_date or project or significance):
+        return (
+            "Provide at least one filter: period, from_date/to_date, project, "
+            "or significance."
+        )
 
     state = state_mod.load()
 
@@ -162,6 +246,12 @@ def chronicle_ls(
             return str(e)
         rows = state_mod.conversations_in_period(state, rs, re_)
         scope = f"{period} ({rs} → {re_})"
+    elif from_date or to_date:
+        rs, re_, err = _resolve_window(from_date, to_date)
+        if err:
+            return err
+        rows = state_mod.conversations_in_period(state, rs, re_)
+        scope = f"{rs} → {re_}"
     else:
         rows = [
             (u, c) for u, c in state["conversations"].items()
@@ -333,6 +423,8 @@ def chronicle_themes(
 def chronicle_cards(
     uuids: list[str] | None = None,
     period: str | None = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
     project: str | None = None,
     significance: str | None = None,
     limit: int = 50,
@@ -353,22 +445,36 @@ def chronicle_cards(
        for the top hits to compare their topics/keywords side by side
        before committing to read one.
 
-    2. BY FILTER — pass any of `period`, `project`, `significance` to list
-       all matching cards. Good for serendipitous revisiting, e.g.
-       chronicle_cards(period="2025_Q3", significance="high") to surface
-       past high-significance conversations worth a second look.
+    2. BY FILTER — pass any of `period`, `from_date`/`to_date`, `project`,
+       `significance` to list all matching cards. Good for serendipitous
+       revisiting, e.g. chronicle_cards(period="2025_Q3", significance="high")
+       to surface past high-significance conversations worth a second look.
+
+    Scope by time with EITHER period (a named label) OR from_date/to_date (an
+    arbitrary day range for "between X and Y" / "since X"). to_date defaults to
+    today, so from_date alone means "from X until now".
 
     Provide a uuid list OR at least one filter. Cards are chronological.
 
     Args:
         uuids: Conversation UUIDs or prefixes to fetch cards for. Optional.
         period: Period label like "2026_Q1", "2026_03_H2", "2025". Optional.
+        from_date: Range start, YYYY-MM-DD (or "now"). Optional.
+        to_date: Range end, YYYY-MM-DD (or "now"). Defaults to today. Optional.
         project: Project name (case-insensitive). See chronicle_projects.
         significance: Filter by "high", "medium", or "low". Optional.
         limit: Max cards to return in filter mode (default 50).
     """
-    if not (uuids or period or project or significance):
-        return "Provide a uuid list, or at least one filter (period, project, significance)."
+    if period and (from_date or to_date):
+        return (
+            "Use either period (a named label) OR from_date/to_date (a day "
+            "range), not both."
+        )
+    if not (uuids or period or from_date or to_date or project or significance):
+        return (
+            "Provide a uuid list, or at least one filter (period, "
+            "from_date/to_date, project, significance)."
+        )
 
     idx = load_index()
     cards = idx.get("entries", []) if idx else []
@@ -397,6 +503,10 @@ def chronicle_cards(
                 _tier, rs, re_ = parse_period(period)
             except PeriodParseError as e:
                 return str(e)
+        elif from_date or to_date:
+            rs, re_, err = _resolve_window(from_date, to_date)
+            if err:
+                return err
         pl = project.lower() if project else None
         selected = []
         for c in cards:
@@ -408,7 +518,8 @@ def chronicle_cards(
             if sig_filter is not None and c.get("significance") != sig_filter:
                 continue
             selected.append(c)
-        bits = [b for b in (period, project, significance) if b]
+        range_label = f"{rs} → {re_}" if (from_date or to_date) else None
+        bits = [b for b in (period, range_label, project, significance) if b]
         scope = f"{len(selected)} card(s) — {', '.join(bits)}"
 
     if uuids and sig_filter is not None:
